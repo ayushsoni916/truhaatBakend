@@ -24,6 +24,8 @@ const createUser = async (req, res) => {
                 firstName: user.firstName,
                 lastName: user.lastName,
                 email: user.email,
+                referralCode: user.referralCode,
+                referredBy: user.referredBy,
                 createdAt: user.createdAt
             }
         })
