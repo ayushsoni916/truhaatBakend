@@ -1,6 +1,7 @@
 const Plan = require("../models/plan.model");
 const PlanPurchase = require("../models/planPurchase.model");
 const User = require("../models/user.model");
+const { handlePlanPurchase } = require("../services/mlm.service");
 
 
 const createPlan = async (req, res) => {
@@ -46,26 +47,32 @@ const getPlans = async (req, res) => {
 }
 
 const purchasePlan = async (req, res) => {
+    // console.log("REQ.USER =", req.user);
     try {
-        const { planId } = req.body;
+        const authUser = req.user;
 
-        if (!planId)
-            return res.status(400).json({ error: 'planId is required' });
-
-        // req.user is set by requireAuth middleware
-        const userId = req.user.id;
-
-        const plan = await Plan.findOne({ _id: planId, isActive: true });
-
-        if (!plan) {
-            return res.status(404).json({ error: 'Plan not found or inactive' });
+        if (!authUser || !authUser.doc) {
+            return res.status(401).json({ error: 'Invalid auth payload' });
         }
 
-        // For now: no expiry logic => planExpiresAt = null
-        const user = await User.findById(userId);
-        if (!user) {
-            // Should basically never happen if requireAuth worked
-            return res.status(401).json({ error: 'User not found' });
+        const user = authUser.doc;          // ✅ already a User document from DB
+        const userId = user._id.toString(); // if you need the id
+        const { planId } = req.body;
+
+        if (!planId) {
+            return res.status(400).json({ error: 'planId is required' });
+        }
+
+        // ✅ BLOCK MULTIPLE PLAN PURCHASES
+        if (user.currentPlan) {
+            return res.status(400).json({
+                error: 'User has already bought a plan'
+            });
+        }
+
+        const plan = await Plan.findById(planId);
+        if (!plan || !plan.isActive) {
+            return res.status(400).json({ error: 'Invalid or inactive plan' });
         }
 
         // Create purchase record
@@ -75,11 +82,14 @@ const purchasePlan = async (req, res) => {
             amount: plan.price
         });
 
+        // Update user plan info (no expiry for now)
         user.currentPlan = plan._id;
         user.planActivatedAt = new Date();
-        user.planExpiresAt = null; // infinite for now
+        user.planExpiresAt = null;
+        await user.save();
 
-        await user.save()
+        // MLM commissions (1% root + 10% levels)
+        await handlePlanPurchase(user, plan, purchase);
 
         return res.status(201).json({
             success: true,
@@ -94,7 +104,8 @@ const purchasePlan = async (req, res) => {
             user: {
                 id: user._id,
                 phone: user.phone,
-                currentPlan: plan._id,
+                referralCode: user.referralCode,
+                currentPlan: user.currentPlan,
                 planActivatedAt: user.planActivatedAt,
                 planExpiresAt: user.planExpiresAt
             }
@@ -103,7 +114,7 @@ const purchasePlan = async (req, res) => {
         console.error('purchasePlan error', err);
         return res.status(500).json({ error: 'Internal server error' });
     }
-}
+};
 
 module.exports = {
     createPlan,

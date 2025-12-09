@@ -83,7 +83,9 @@ const verifyOtp = async (req, res) => {
 
 const signup = async (req, res) => {
     try {
-        const { signupToken, firstName, lastName, email } = req.body;
+        const { signupToken, firstName, lastName, email, gender, referralCode } = req.body;
+
+        // console.log(req.body)
 
         if (!signupToken) {
             return res.status(400).json({ error: 'signupToken is required' });
@@ -106,11 +108,43 @@ const signup = async (req, res) => {
         if (existing)
             return res.status(400).json({ error: 'User already exists' })
 
+        let referredBy = null;
+        let mlmRoot = null;
+
+        // --- Referral handling with MAX 2 direct users ---
+        if (referralCode) {
+            const referrer = await User.findOne({ referralCode });
+
+            if (!referrer) {
+                return res.status(400).json({ error: 'Invalid referral code' });
+            }
+
+            // Check how many direct users this referrer already has
+            const directChildrenCount = await User.countDocuments({ referredBy: referrer._id });
+            if (directChildrenCount >= 2) {
+                return res.status(400).json({ error: 'This referral code already has 2 direct users' });
+            }
+
+            referredBy = referrer._id;
+
+            // mlmRoot logic:
+            if (referrer.role === 'SUBADMIN') {
+                // subadmin is the root of this tree
+                mlmRoot = referrer._id;
+            } else {
+                // inherit referrer’s root (if null => direct under admin)
+                mlmRoot = referrer.mlmRoot || null;
+            }
+        }
+
         const user = new User({
             phone,
             firstName: firstName || "",
             lastName: lastName || "",
-            email: email || ""
+            email: email || "",
+            referredBy,
+            mlmRoot,
+            gender
         })
 
         await user.save()
@@ -127,7 +161,12 @@ const signup = async (req, res) => {
                 firstName: user.firstName,
                 lastName: user.lastName,
                 email: user.email,
-                createdAt: user.createdAt
+                gender: user.gender,
+                createdAt: user.createdAt,
+                referralCode: user.referralCode,
+                referredBy: user.referredBy,
+                mlmRoot: user.mlmRoot,
+                role: user.role,
             }
         })
     } catch (error) {

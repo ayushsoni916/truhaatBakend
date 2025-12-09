@@ -25,14 +25,35 @@ const userSchema = new mongoose.Schema({
         index: true,
         sparse: true      // makes index ignore null values
     },
+    gender: {
+        type: String,
+        enum: ['Male', 'Female', 'Other'],
+        default: 'Male',
+    },
 
     //MLM
+    role: {
+        type: String,
+        enum: ['USER', 'SUBADMIN'],
+        default: 'USER',
+        index: true
+    },
     referralCode: {
         type: String,
         unique: true,
         index: true
     },
     referredBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null,
+        index: true
+    },
+    directActiveRefCount: {
+        type: Number,
+        default: 0
+    },
+    mlmRoot: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         default: null,
@@ -69,20 +90,20 @@ function generateReferralCode() {
 
 // Auto-generate referralCode if missing
 userSchema.pre('save', async function () {
-  if (this.referralCode) return;
+    if (this.referralCode) return;
 
-  let code;
-  let exists = true;
+    let code;
+    let exists = true;
 
-  while (exists) {
-    code = generateReferralCode();
-    const count = await this.constructor.countDocuments({ referralCode: code });
-    if (count === 0) {
-      exists = false;
+    while (exists) {
+        code = generateReferralCode();
+        const count = await this.constructor.countDocuments({ referralCode: code });
+        if (count === 0) {
+            exists = false;
+        }
     }
-  }
 
-  this.referralCode = code;
+    this.referralCode = code;
 });
 
 
