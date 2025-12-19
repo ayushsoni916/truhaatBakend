@@ -31,6 +31,47 @@ const userSchema = new mongoose.Schema({
         default: 'Male',
     },
 
+    // === KYC STATUS FLAGS ===
+    isAadhaarVerified: {
+        type: Boolean,
+        default: false,
+        index: true
+    },
+    isPanVerified: {
+        type: Boolean,
+        default: false,
+        index: true
+    },
+    isBankVerified: {
+        type: Boolean,
+        default: false,
+        index: true
+    },
+
+    // === KYC DATA ===
+    aadhaar: {
+        number: { type: String },
+        name: { type: String },
+        dob: { type: String },
+        gender: { type: String },
+        address: { type: Object },
+        verifiedAt: { type: Date },
+    },
+
+    pan: {
+        number: { type: String },
+        name: { type: String },
+        verifiedAt: { type: Date }
+    },
+
+    bank: {
+        accountNumber: { type: String },
+        ifsc: { type: String },
+        bankName: { type: String },
+        verifiedAt: { type: Date }
+    },
+
+
     //MLM
     role: {
         type: String,
@@ -41,7 +82,8 @@ const userSchema = new mongoose.Schema({
     referralCode: {
         type: String,
         unique: true,
-        index: true
+        index: true,
+        immutable: true
     },
     referredBy: {
         type: mongoose.Schema.Types.ObjectId,
@@ -90,7 +132,7 @@ function generateReferralCode() {
 
 // Auto-generate referralCode if missing
 userSchema.pre('save', async function () {
-    if (this.referralCode) return;
+    if (!this.isNew) return;
 
     let code;
     let exists = true;

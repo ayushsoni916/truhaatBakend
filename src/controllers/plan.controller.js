@@ -6,10 +6,26 @@ const { handlePlanPurchase } = require("../services/mlm.service");
 
 const createPlan = async (req, res) => {
     try {
-        const { name, price, description, benefits, referralPercent, sortOrder } = req.body;
+        const {
+            name,
+            price,
+            description,
+            benefits,
+            sortOrder,
+            planType
+        } = req.body;
 
-        if (!name || price == null || referralPercent == null) {
-            return res.status(400).json({ error: 'name, price and referralPercent are required' });
+        // ---- BASIC VALIDATION ----
+        if (!name || price == null || !planType) {
+            return res.status(400).json({
+                error: 'name, price and planType are required'
+            });
+        }
+
+        // ---- HARD RULE: USER plans always have 10% referral ----
+        let referralPercent = 0;
+        if (planType === 'USER') {
+            referralPercent = 10;
         }
 
         const plan = await Plan.create({
@@ -18,33 +34,76 @@ const createPlan = async (req, res) => {
             description: description || '',
             benefits: Array.isArray(benefits) ? benefits : [],
             referralPercent,
+            planType,
             sortOrder: sortOrder ?? 0
         });
 
         return res.status(201).json({ success: true, plan });
 
-
     } catch (error) {
         console.error('createPlan error', error);
+
         if (error.code === 11000) {
-            return res.status(409).json({ error: 'Plan with this name already exists' });
+            return res.status(409).json({
+                error: 'Plan with this name already exists'
+            });
         }
-        return res.status(500).json({ error: 'Internal server error' });
+
+        return res.status(500).json({
+            error: 'Internal server error'
+        });
     }
-}
+};
 
 const getPlans = async (req, res) => {
     try {
-        const plans = await Plan.find({ isActive: true })
+        // console.log('req.user =', req);
+        const authUser = req.user;
+
+        if (!authUser || !authUser.doc) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const user = authUser.doc;
+
+        // Decide plan type based on role
+        const planType = user.role === 'SUBADMIN' ? 'SUBADMIN' : 'USER';
+
+        const plans = await Plan.find({
+            isActive: true,
+            planType
+        })
             .sort({ sortOrder: 1, price: 1 })
             .lean();
 
-        return res.status(200).json({ success: true, plans })
+        return res.status(200).json({
+            success: true,
+            planType,
+            plans
+        });
+
     } catch (err) {
         console.error('getPlans error', err);
         return res.status(500).json({ error: 'Internal server error' });
     }
-}
+};
+
+
+const getSubAdminPlans = async (req, res) => {
+    try {
+        const plans = await Plan.find({
+            isActive: true,
+            planType: 'SUBADMIN'
+        })
+            .sort({ sortOrder: 1, price: 1 })
+            .lean();
+
+        return res.status(200).json({ success: true, plans });
+    } catch (err) {
+        console.error('getSubAdminPlans error', err);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+};
 
 const purchasePlan = async (req, res) => {
     // console.log("REQ.USER =", req.user);
@@ -119,5 +178,6 @@ const purchasePlan = async (req, res) => {
 module.exports = {
     createPlan,
     getPlans,
-    purchasePlan
+    purchasePlan,
+    getSubAdminPlans
 };

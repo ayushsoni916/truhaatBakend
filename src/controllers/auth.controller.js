@@ -57,14 +57,6 @@ const verifyOtp = async (req, res) => {
                 isNewUser: false,
                 token,
                 user
-                // user: {
-                //     id: user._id,
-                //     phone: user.phone,
-                //     firstName: user.firstName,
-                //     lastName: user.lastName,
-                //     email: user.email,
-                //     createdAt: user.createdAt
-                // }
             })
         }
 
@@ -137,17 +129,19 @@ const signup = async (req, res) => {
             }
         }
 
-        const user = new User({
+
+        const user = await User.create({
             phone,
             firstName: firstName || "",
             lastName: lastName || "",
             email: email || "",
+            gender,
             referredBy,
-            mlmRoot,
-            gender
-        })
+            mlmRoot
+        });
 
-        await user.save()
+        // 🔑 FETCH FRESH USER (WITH DEFAULTS)
+        const savedUser = await User.findById(user._id).lean();
 
         const token = generateAccessToken(user);
 
@@ -155,19 +149,7 @@ const signup = async (req, res) => {
             success: true,
             isNewUser: false,
             token,
-            user: {
-                id: user._id,
-                phone: user.phone,
-                firstName: user.firstName,
-                lastName: user.lastName,
-                email: user.email,
-                gender: user.gender,
-                createdAt: user.createdAt,
-                referralCode: user.referralCode,
-                referredBy: user.referredBy,
-                mlmRoot: user.mlmRoot,
-                role: user.role,
-            }
+            user: savedUser
         })
     } catch (error) {
         console.error('signup error', error);

@@ -2,31 +2,24 @@
 const User = require('../models/user.model');
 const PlanPurchase = require('../models/planPurchase.model');
 const Commission = require('../models/commission.model');
+const Plan = require('../models/plan.model');
+
+// L1 → 28%
+// L2 → 18%
+// L3 → 15%
+// L4 → 9%
+// L5 → 8%
+// L6 → 7%
+// L7 → 6%
+// L8 → 5%
+// L9 → 4%
+// TOTAL = 100% of MLM pool (10% of price)
+
 
 const MAX_LEVELS = 9;
 // Right now 1%, later you can make this dynamic per subadmin plan
 const ROOT_PERCENT = 0.01;
-
-function computeLevelShares(total, numLevels) {
-    if (numLevels <= 0 || total <= 0) return [];
-
-    // weights: nearest ancestor gets most
-    // Example: L=3 -> [3,2,1] => closer gets more
-    const weights = [];
-    for (let i = 0; i < numLevels; i++) {
-        weights.push(numLevels - i); // L, L-1, ..., 1
-    }
-
-    const sumW = weights.reduce((a, b) => a + b, 0);
-    const shares = weights.map(w => Number((total * w / sumW).toFixed(2)));
-
-    // Fix rounding: adjust last share
-    const sumShares = shares.reduce((a, b) => a + b, 0);
-    const diff = Number((total - sumShares).toFixed(2));
-    shares[shares.length - 1] += diff;
-
-    return shares;
-}
+const LEVEL_PERCENTS = [28, 18, 15, 9, 8, 7, 6, 5, 4]; // sum = 100
 
 async function getAncestors(user, maxLevels = MAX_LEVELS) {
     const ancestors = [];
@@ -72,28 +65,37 @@ async function handlePlanPurchase(buyer, plan, purchase) {
         }
     }
 
-    // 3) ROOT 1%: to mlmRoot (subadmin) or admin
+    // 3) ROOT x%: to mlmRoot (subadmin) or 1% to admin
     if (rootCut > 0) {
         if (buyer.mlmRoot) {
             const rootUser = await User.findById(buyer.mlmRoot)
                 .select('_id directActiveRefCount');
 
-            if (rootUser) {
-                const status = rootUser.directActiveRefCount >= 2 ? 'RELEASED' : 'FROZEN';
+            if (rootUser && rootUser.role === 'SUBADMIN' && rootUser.currentPlan) {
+                const subAdminPlan = await Plan.findById(rootUser.currentPlan)
+                    .select('referralPercent');
 
-                await Commission.create({
-                    earner: rootUser._id,
-                    earnerType: 'USER',
-                    fromUser: buyer._id,
-                    plan: plan._id,
-                    purchase: purchase._id,
-                    level: null,
-                    kind: 'ROOT_1P',
-                    amount: rootCut,
-                    status
-                });
+                if (subAdminPlan && subAdminPlan.referralPercent > 0) {
+                    const amount = Number(
+                        (price * subAdminPlan.referralPercent / 100).toFixed(2)
+                    );
+                    const status = rootUser.directActiveRefCount >= 2 ? 'RELEASED' : 'FROZEN';
+
+                    await Commission.create({
+                        earner: rootUser._id,
+                        earnerType: 'USER',
+                        fromUser: buyer._id,
+                        plan: plan._id,
+                        purchase: purchase._id,
+                        level: null,
+                        kind: 'SUBADMIN_REFERRAL',
+                        amount,
+                        status: status
+                    });
+                }
             }
-        } else {
+        }
+        else {
             // No subadmin tree above -> 1% stays with admin (we still record it)
             await Commission.create({
                 earner: null,
@@ -115,47 +117,51 @@ async function handlePlanPurchase(buyer, plan, purchase) {
     // Exclude SUBADMINs from MLM_LEVEL distribution
     const ancestors = rawAncestors.filter(a => a.role !== 'SUBADMIN');
 
+    let adminRemainder = 0;
 
-    if (!ancestors.length) {
-        // No upline at all → whole 10% goes to admin
-        if (mlmPool > 0) {
-            await Commission.create({
-                earner: null,
-                earnerType: 'ADMIN',
-                fromUser: buyer._id,
-                plan: plan._id,
-                purchase: purchase._id,
-                level: null,
-                kind: 'MLM_LEVEL',
-                amount: mlmPool,
-                status: 'RELEASED'
-            });
-        }
-    } else {
-        const shares = computeLevelShares(mlmPool, ancestors.length);
+    for (let i = 0; i < ancestors.length && i < LEVEL_PERCENTS.length; i++) {
+        const anc = ancestors[i];
+        const level = i + 1;
+        const percent = LEVEL_PERCENTS[i];
+        const amount = Number((mlmPool * percent / 100).toFixed(2));
 
-        // ancestors[0] = level 1 (closest), ancestors[1] = level 2, ...
-        for (let i = 0; i < ancestors.length; i++) {
-            const anc = ancestors[i];
-            const level = i + 1;
-            const amount = shares[i];
+        const status =
+            anc.directActiveRefCount >= 2 ? 'RELEASED' : 'FROZEN';
 
-            if (amount <= 0) continue;
+        await Commission.create({
+            earner: anc._id,
+            earnerType: 'USER',
+            fromUser: buyer._id,
+            plan: plan._id,
+            purchase: purchase._id,
+            level,
+            kind: 'MLM_LEVEL',
+            amount,
+            status
+        });
+    }
 
-            const status = anc.directActiveRefCount >= 2 ? 'RELEASED' : 'FROZEN';
+    // ✅ ADMIN gets everything else in ONE ENTRY
+    const paidPercent = LEVEL_PERCENTS
+        .slice(0, ancestors.length)
+        .reduce((a, b) => a + b, 0);
 
-            await Commission.create({
-                earner: anc._id,
-                earnerType: 'USER',
-                fromUser: buyer._id,
-                plan: plan._id,
-                purchase: purchase._id,
-                level,
-                kind: 'MLM_LEVEL',
-                amount,
-                status
-            });
-        }
+    const remainingPercent = 100 - paidPercent;
+
+    if (remainingPercent > 0) {
+        const adminAmount = Number((mlmPool * remainingPercent / 100).toFixed(2));
+
+        await Commission.create({
+            earner: null,
+            earnerType: 'ADMIN',
+            fromUser: buyer._id,
+            plan: plan._id,
+            purchase: purchase._id,
+            level: null,
+            kind: 'MLM_LEVEL',
+            amount: adminAmount,
+            status: 'RELEASED'
+        });
     }
 
     // 5) If some parent just completed pair, unfreeze all their commissions

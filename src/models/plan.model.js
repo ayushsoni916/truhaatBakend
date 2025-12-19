@@ -20,6 +20,11 @@ const planSchema = new mongoose.Schema({
         type: [String],   // array of strings
         default: []
     },
+    planType: {
+        type: String,
+        enum: ['USER', 'SUBADMIN'],
+        required: true
+    },
     referralPercent: {
         type: Number,
         required: true,
