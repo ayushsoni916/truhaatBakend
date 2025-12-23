@@ -66,20 +66,24 @@ async function handlePlanPurchase(buyer, plan, purchase) {
     }
 
     // 3) ROOT x%: to mlmRoot (subadmin) or 1% to admin
-    if (rootCut > 0) {
+    console.log('Assigning ROOT cut for buyer', buyer._id);
+    if (buyer.role === 'USER') {
         if (buyer.mlmRoot) {
+            console.log('Buyer has mlmRoot', buyer.mlmRoot, 'checking for SUBADMIN plan');
             const rootUser = await User.findById(buyer.mlmRoot)
-                .select('_id directActiveRefCount');
-
+                .select('_id directActiveRefCount currentPlan role');
+            console.log('Found mlmRoot user:', rootUser);
             if (rootUser && rootUser.role === 'SUBADMIN' && rootUser.currentPlan) {
+                console.log('mlmRoot', rootUser._id, 'is SUBADMIN with plan, assigning SUBADMIN_REFERRAL commission');
                 const subAdminPlan = await Plan.findById(rootUser.currentPlan)
                     .select('referralPercent');
 
                 if (subAdminPlan && subAdminPlan.referralPercent > 0) {
+                    console.log('Subadmin plan has referralPercent', subAdminPlan.referralPercent);
                     const amount = Number(
                         (price * subAdminPlan.referralPercent / 100).toFixed(2)
                     );
-                    const status = rootUser.directActiveRefCount >= 2 ? 'RELEASED' : 'FROZEN';
+                    // const status = rootUser.directActiveRefCount >= 2 ? 'RELEASED' : 'FROZEN';
 
                     await Commission.create({
                         earner: rootUser._id,
@@ -90,13 +94,21 @@ async function handlePlanPurchase(buyer, plan, purchase) {
                         level: null,
                         kind: 'SUBADMIN_REFERRAL',
                         amount,
-                        status: status
+                        status: 'RELEASED'
                     });
                 }
+                else {
+                    console.log('Subadmin plan has no valid referralPercent, skipping SUBADMIN_REFERRAL commission');
+                }
+            }
+            else {
+                // No valid subadmin plan found, assign to admin
+                console.log('No valid SUBADMIN plan for mlmRoot', buyer.mlmRoot, 'assigning ROOT commission to ADMIN');
             }
         }
         else {
             // No subadmin tree above -> 1% stays with admin (we still record it)
+            console.log('No mlmRoot for buyer', buyer._id, 'assigning ROOT commission to ADMIN');
             await Commission.create({
                 earner: null,
                 earnerType: 'ADMIN',

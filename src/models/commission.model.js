@@ -45,7 +45,7 @@ const commissionSchema = new mongoose.Schema({
   // MLM_LEVEL = 10% tree, ROOT_1P = 1% root subadmin/admin
   kind: {
     type: String,
-    enum: ['MLM_LEVEL', 'ROOT_1P'],
+    enum: ['MLM_LEVEL', 'ROOT_1P', 'SUBADMIN_REFERRAL'],
     required: true
   },
 
