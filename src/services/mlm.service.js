@@ -19,7 +19,7 @@ const Plan = require('../models/plan.model');
 const MAX_LEVELS = 9;
 // Right now 1%, later you can make this dynamic per subadmin plan
 const ROOT_PERCENT = 0.01;
-const LEVEL_PERCENTS = [28, 18, 15, 9, 8, 7, 6, 5, 4]; // sum = 100
+const LEVEL_PERCENTS = [50, 15, 8, 7, 6, 5, 4, 3, 2]; // sum = 100
 
 async function getAncestors(user, maxLevels = MAX_LEVELS) {
     const ancestors = [];
@@ -41,7 +41,7 @@ async function getAncestors(user, maxLevels = MAX_LEVELS) {
 
 async function handlePlanPurchase(buyer, plan, purchase) {
     const price = plan.price;
-    const mlmPercent = 10; // you said fixed 10% for now
+    const mlmPercent = 5; // you said fixed 5% for now
     const mlmPool = price * (mlmPercent / 100);    // 10% for levels
     const rootCut = price * ROOT_PERCENT;          // 1% for mlmRoot/admin
 
