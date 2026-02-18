@@ -17,7 +17,7 @@ const generateAccessToken = (user) => {
         phone: user.phone,
         type: 'access'
     };
-    return jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_EXP });
+    return jwt.sign(payload, JWT_SECRET);
 };
 
 // Short-lived token just to allow signup **after** OTP
@@ -26,7 +26,7 @@ const generateSignupToken = (phone) => {
         phone,
         type: 'signup'
     };
-    return jwt.sign(payload, JWT_SECRET, { expiresIn: SIGNUP_TOKEN_EXP });
+    return jwt.sign(payload, JWT_SECRET);
 };
 
 // Generic verify (for middleware)

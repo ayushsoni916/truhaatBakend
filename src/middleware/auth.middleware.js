@@ -10,6 +10,7 @@ const requireAuth = async (req, res, next) => {
         }
 
         const token = authHeader.split(' ')[1]; // "Bearer TOKEN"
+        // console.log("we are here",token)
 
         let payload;
 
@@ -37,6 +38,8 @@ const requireAuth = async (req, res, next) => {
             tokenPayload: payload,
             doc: user
         };
+
+        // console.log("reqUser",req.user)
 
         next();
     } catch (error) {
