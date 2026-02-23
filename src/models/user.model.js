@@ -30,6 +30,14 @@ const userSchema = new mongoose.Schema({
         enum: ['Male', 'Female', 'Other'],
         default: 'Male',
     },
+    profilePic: {
+        type: String,
+        default: ''
+    },
+    profilePublicUrl: {
+        type: String,
+        default: ''
+    },
 
     // === KYC STATUS FLAGS ===
     isAadhaarVerified: {

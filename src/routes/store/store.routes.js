@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../../middleware/auth.middleware');
-const { placeOrder, getCart, addToCart, applyCoupon, getAddresses, addAddress, removeCartItem, getDefaultAddress, updateCartItem, createCoupon, getCoupons } = require('../../controllers/store/store.controller');
+const { placeOrder, getCart, addToCart, applyCoupon, getAddresses, addAddress, removeCartItem, getDefaultAddress, updateCartItem, createCoupon, getCoupons, getUserOrders, getOrderDetails } = require('../../controllers/store/store.controller');
 const cartRouter = express.Router();
 
 // Import Controller Functions
@@ -56,5 +56,11 @@ cartRouter.post('/cart/coupon/apply', requireAuth, applyCoupon);
 
 // POST /api/store/order/place - Final Checkout
 cartRouter.post('/order/place', requireAuth, placeOrder);
+
+// GET /api/store/order/my-orders - List all orders for a user
+cartRouter.get('/order/my-orders', requireAuth, getUserOrders);
+
+// GET /api/store/order/:orderId - View specific order details
+cartRouter.get('/order/:orderId', requireAuth, getOrderDetails);
 
 module.exports = cartRouter;

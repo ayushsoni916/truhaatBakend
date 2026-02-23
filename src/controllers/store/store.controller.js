@@ -432,6 +432,72 @@ exports.placeOrder = async (req, res, next) => {
     }
 };
 
+// --- 1. Get List of All Orders for a User ---
+exports.getUserOrders = async (req, res, next) => {
+    try {
+        const userId = req.user.id;
+
+        // Fetch orders, sort by newest first
+        const orders = await Order.find({ user: userId })
+            .select('orderId createdAt status finalAmount items') // Select only necessary fields for the list
+            .sort({ createdAt: -1 });
+
+        res.status(200).json({
+            success: true,
+            count: orders.length,
+            data: orders
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// --- 2. Get Single Order Details (The Bill/Invoice View) ---
+exports.getOrderDetails = async (req, res, next) => {
+    try {
+        const userId = req.user.id;
+        const { orderId } = req.params;
+
+        // Find specific order by orderId (e.g., ORD-12345) and ensure it belongs to the user
+        const order = await Order.findOne({
+            orderId: orderId,
+            user: userId
+        });
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                error: 'Order not found'
+            });
+        }
+
+        // Return a structure similar to getCart summary for UI consistency
+        res.status(200).json({
+            success: true,
+            data: {
+                orderInfo: {
+                    id: order.orderId,
+                    date: order.createdAt,
+                    status: order.status || "Pending",
+                    paymentMode: order.paymentMode,
+                    paymentStatus: order.paymentStatus
+                },
+                items: order.items, // This contains the snapshot (name, price, qty, image)
+                shippingAddress: order.shippingAddress,
+                summary: {
+                    subtotal: order.subtotal,
+                    discount: order.discount,
+                    shipping: order.shippingFee,
+                    total: order.finalAmount,
+                    coupon: order.couponApplied
+                }
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 // ==========================================
 // Address CONTROLLER
 // ==========================================
