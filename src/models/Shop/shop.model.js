@@ -2,34 +2,29 @@ const mongoose = require('mongoose');
 
 const shopSchema = new mongoose.Schema({
     // Changed: Store Owner Details directly instead of User ID
-    owner: { 
+    owner: {
         name: { type: String, required: true, trim: true },
         mobile: { type: String, required: true },
         email: { type: String, trim: true }
     },
 
-    name: { 
-        type: String, 
-        required: true, 
-        trim: true 
+    name: {
+        type: String,
+        required: true,
+        trim: true
     },
     // This is the public shop phone number (might be different from owner's mobile)
-    phone: { 
-        type: String, 
-        required: true 
+    phone: {
+        type: String,
+        required: true
     },
-    
-    // Categorization
-    category: { 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: 'ShopCategory', 
-        required: true 
-    },
-    subCategories: [{ 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: 'ShopSubCategory' 
-    }],
 
+    // Categorization
+    mainCategory: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'MainShopCategory',
+        required: true
+    },
     // Location & Address
     address: {
         street: String,
@@ -39,20 +34,22 @@ const shopSchema = new mongoose.Schema({
         pincode: String
     },
     location: {
-        type: { 
-            type: String, 
-            default: 'Point' 
+        type: {
+            type: String,
+            default: 'Point'
         },
-        coordinates: { 
-            type: [Number], 
+        coordinates: {
+            type: [Number],
             required: true // [longitude, latitude]
         }
     },
 
     // Visuals
-    logo: { type: String }, 
-    images: [{ type: String }], 
-    
+    images: [{
+        url: { type: String, required: true },
+        publicId: { type: String, required: true }
+    }],
+
     description: { type: String },
     rating: { type: Number, default: 0 },
     isOpen: { type: Boolean, default: true }

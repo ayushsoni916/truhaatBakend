@@ -9,7 +9,11 @@ const kycRouter = require('./kyc.routes')
 const categoryRouter = require('./store/category.routes')
 const productRouter = require('./store/product.routes')
 const cartRouter = require('./store/store.routes.js')
-const shopRouter = require('./shop.routes.js')
+const bannerRouter = require('./banner.route.js');
+const adminSetupRouter = require('./shop/admin_setup.routes.js')
+const shopRouter = require('./shop/shop.routes.js')
+const mainCategoryRouter = require('./shop/mainCategory.routes.js')
+const shopProductRouter = require('./shop/shopProduct.routes.js')
 const router = express.Router()
 
 router.use('/users', userRouter)
@@ -24,5 +28,10 @@ router.use('/category', categoryRouter);
 router.use('/product', productRouter);
 router.use('/store', cartRouter);
 router.use('/shop', shopRouter);
+router.use('/admin-setup', adminSetupRouter);
+router.use('/main-category', mainCategoryRouter);
+router.use('/shopProduct', shopProductRouter);
+
+router.use('/banners', bannerRouter);
 
 module.exports = router;
