@@ -1,5 +1,6 @@
 const express = require('express');
 const { addProduct, getProducts, getProductById } = require('../../controllers/store/product.controller');
+const { getProductDetailOffline } = require('../../controllers/shop/product.controller');
 const productRouter = express.Router();
 
 productRouter.post('/add', addProduct);        // POST /api/product/add

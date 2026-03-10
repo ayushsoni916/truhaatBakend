@@ -230,3 +230,50 @@ exports.getTopDeals = async (req, res, next) => {
         next(error);
     }
 };
+
+// --- Get Single Product with Shop Details ---
+exports.getProductDetailOffline = async (req, res, next) => {
+    try {
+        const { productId } = req.params;
+
+        // 1. Fetch product and populate the 'shop' and 'category' details
+        const product = await Product.findById(productId)
+            .populate('shop', 'name images location address rating description phone')
+            .populate('category', 'name')
+            .lean();
+
+        if (!product) {
+            return res.status(404).json({ success: false, message: "Product not found" });
+        }
+
+        // 2. Format the Product Data for the Frontend
+        const formattedProduct = {
+            ...product,
+            // Main image for the product
+            displayImage: product.images?.[0]?.url || null,
+            // Array of all product image URLs for the gallery
+            allImages: product.images?.map(img => img.url) || [],
+            // Calculate savings percentage
+            discountPercentage: product.price > 0 && product.salePrice 
+                ? Math.round(((product.price - product.salePrice) / product.price) * 100)
+                : 0,
+            
+            // 3. Format the Shop Data for the "Shop" tab
+            shopDetails: product.shop ? {
+                ...product.shop,
+                // Extract shop logo/banner from shop images array
+                displayImage: product.shop.images?.[0] || null, 
+                // Useful for the "Locate Me" button
+                coordinates: product.shop.location?.coordinates || []
+            } : null
+        };
+
+        res.status(200).json({
+            success: true,
+            data: formattedProduct
+        });
+    } catch (error) {
+        console.error("Fetch Product Error:", error);
+        next(error);
+    }
+};

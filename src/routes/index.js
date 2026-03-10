@@ -14,6 +14,9 @@ const adminSetupRouter = require('./shop/admin_setup.routes.js')
 const shopRouter = require('./shop/shop.routes.js')
 const mainCategoryRouter = require('./shop/mainCategory.routes.js')
 const shopProductRouter = require('./shop/shopProduct.routes.js')
+const shopCartRouter = require('./shop/cart.route.js')
+const orderRouter = require('./shop/order.route.js')
+const notificationRouter = require('./notification.route.js')
 const router = express.Router()
 
 router.use('/users', userRouter)
@@ -31,7 +34,10 @@ router.use('/shop', shopRouter);
 router.use('/admin-setup', adminSetupRouter);
 router.use('/main-category', mainCategoryRouter);
 router.use('/shopProduct', shopProductRouter);
+router.use('/shopCart', shopCartRouter);
+router.use('/orderOffline', orderRouter);
 
 router.use('/banners', bannerRouter);
+router.use('/notifications', notificationRouter);
 
 module.exports = router;
