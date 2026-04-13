@@ -8,6 +8,11 @@ const app = express();
 // Connect to the database
 connectDb();
 
+app.use((req, res, next) => {
+    console.log(`Incoming Request: ${req.method} ${req.url}`);
+    next();
+});
+
 // Middleware to parse JSON requests
 // app.use(express.json());
 app.use((req, res, next) => {
