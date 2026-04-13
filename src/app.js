@@ -9,8 +9,14 @@ const app = express();
 connectDb();
 
 // Middleware to parse JSON requests
-app.use(express.json());
-
+// app.use(express.json());
+app.use((req, res, next) => {
+    if (req.originalUrl === '/api/payments/webhook') {
+        next();
+    } else {
+        express.json()(req, res, next);
+    }
+});
 //health endpoin
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() })

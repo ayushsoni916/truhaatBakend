@@ -17,6 +17,7 @@ const shopProductRouter = require('./shop/shopProduct.routes.js')
 const shopCartRouter = require('./shop/cart.route.js')
 const orderRouter = require('./shop/order.route.js')
 const notificationRouter = require('./notification.route.js')
+const paymentRouter = require('./payment.routes.js');
 const router = express.Router()
 
 router.use('/users', userRouter)
@@ -39,5 +40,7 @@ router.use('/orderOffline', orderRouter);
 
 router.use('/banners', bannerRouter);
 router.use('/notifications', notificationRouter);
+
+router.use('/payments', paymentRouter);
 
 module.exports = router;
