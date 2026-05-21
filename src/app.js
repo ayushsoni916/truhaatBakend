@@ -1,13 +1,14 @@
 require('dotenv').config();
 const express = require('express');
 const connectDb = require('./config/db');
+const cors = require('cors');
 const apiRoutes = require('./routes'); // loads src/routes/index.js
 
 const app = express();
 
 // Connect to the database
 connectDb();
-
+app.use(cors());
 // Middleware to parse JSON requests
 // app.use(express.json());
 app.use((req, res, next) => {

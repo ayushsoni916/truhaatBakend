@@ -18,6 +18,8 @@ const shopCartRouter = require('./shop/cart.route.js')
 const orderRouter = require('./shop/order.route.js')
 const notificationRouter = require('./notification.route.js')
 const paymentRouter = require('./payment.routes.js');
+const serviceRouter = require('./services/serviceCategory.routes.js')
+const serviceAgentrouter = require('./services/serviceAgent.routes.js')
 const router = express.Router()
 
 router.use('/users', userRouter)
@@ -42,5 +44,7 @@ router.use('/banners', bannerRouter);
 router.use('/notifications', notificationRouter);
 
 router.use('/payments', paymentRouter);
+router.use('/services', serviceRouter);
+router.use('/services/agents', serviceAgentrouter);
 
 module.exports = router;
