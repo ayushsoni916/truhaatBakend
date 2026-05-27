@@ -175,10 +175,16 @@ const createSubService = async (req, res) => {
 
 const addLocationPrice = async (req, res) => {
     try {
-        const { subServiceId, country, state, city, locality, price } = req.body;
+        const { subServiceId, pincode, price } = req.body;
 
-        if (!subServiceId || !state || !city || !locality || price === undefined) {
-            return res.status(400).json({ success: false, error: 'subServiceId, state, city, locality, and price are required' });
+        if (!subServiceId || !pincode || price === undefined) {
+            return res.status(400).json({ success: false, error: 'subServiceId, pincode, and price are required' });
+        }
+
+        const cleanPincode = pincode.trim();
+        // Validation boundary check to ensure standard 6-digit formatting
+        if (!/^\d{6}$/.test(cleanPincode)) {
+            return res.status(400).json({ success: false, error: 'Invalid pincode format. Must be an exact 6-digit numeric string.' });
         }
 
         // 1. Ensure target item reference exists
@@ -187,31 +193,20 @@ const addLocationPrice = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Target sub-service item not found' });
         }
 
-        // 2. Standardize inputs to matching case-insensitive variants
-        const cleanCountry = country ? country.trim().toLowerCase() : 'india';
-        const cleanState = state.trim().toLowerCase();
-        const cleanCity = city.trim().toLowerCase();
-        const cleanLocality = locality.trim().toLowerCase();
-
-        // 3. Prevent price overlapping on exact location bounds
+        // 2. Prevent duplicate price overlapping rules for the same item in the same pincode
         const existingPrice = await ServicePriceBook.findOne({
             subService: subServiceId,
-            country: cleanCountry,
-            state: cleanState,
-            city: cleanCity,
-            locality: cleanLocality
+            pincode: cleanPincode
         });
 
         if (existingPrice) {
-            return res.status(400).json({ success: false, error: 'A price entry already exists for this exact location block' });
+            return res.status(400).json({ success: false, error: 'A price entry already exists for this item inside this pincode cluster' });
         }
 
+        // 3. Persist record cleanly
         const priceRecord = await ServicePriceBook.create({
             subService: subServiceId,
-            country: cleanCountry,
-            state: cleanState,
-            city: cleanCity,
-            locality: cleanLocality,
+            pincode: cleanPincode,
             price: Number(price)
         });
 
@@ -228,18 +223,15 @@ const addLocationPrice = async (req, res) => {
 
 const getAvailableServicesByLocation = async (req, res) => {
     try {
-        const { subcategoryId, country, state, city, locality } = req.body;
+        const { subcategoryId, pincode } = req.body;
 
-        if (!subcategoryId || !state || !city || !locality) {
-            return res.status(400).json({ success: false, error: 'subcategoryId, state, city, and locality are required' });
+        if (!subcategoryId || !pincode) {
+            return res.status(400).json({ success: false, error: 'subcategoryId and pincode string are required' });
         }
 
-        const cleanCountry = country ? country.trim().toLowerCase() : 'india';
-        const cleanState = state.trim().toLowerCase();
-        const cleanCity = city.trim().toLowerCase();
-        const cleanLocality = locality.trim().toLowerCase();
+        const cleanPincode = pincode.trim();
 
-        // 1. Grab all active base actions tied to this subcategory grouping
+        // 1. Grab all active catalog items tied to this subcategory grouping
         const items = await ServiceSubService.find({ subcategory: subcategoryId, isActive: true });
         if (items.length === 0) {
             return res.json({ success: true, data: [] });
@@ -247,18 +239,14 @@ const getAvailableServicesByLocation = async (req, res) => {
 
         const resolvedCatalog = [];
 
-        // 2. Loop through and execute targeted lookup resolutions
+        // 2. Loop through and map matches based strictly on the passed pincode token
         for (const item of items) {
             const priceMatch = await ServicePriceBook.findOne({
                 subService: item._id,
-                country: cleanCountry,
-                state: cleanState,
-                city: cleanCity,
-                locality: cleanLocality,
+                pincode: cleanPincode,
                 isActive: true
             });
 
-            // If the client manually added a price rule, provide it to the listing array
             if (priceMatch) {
                 resolvedCatalog.push({
                     subServiceId: item._id,
@@ -269,12 +257,12 @@ const getAvailableServicesByLocation = async (req, res) => {
             }
         }
 
-        // 3. Fallback check: If zero price records match, services are not offered here!
+        // 3. Fallback boundary evaluation
         if (resolvedCatalog.length === 0) {
             return res.status(404).json({
                 success: false,
                 error: 'SERVICE_UNAVAILABLE',
-                message: 'Services are currently unavailable at your location.'
+                message: `Services are currently unavailable in pincode area: ${cleanPincode}`
             });
         }
 

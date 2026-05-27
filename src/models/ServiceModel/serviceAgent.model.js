@@ -49,12 +49,23 @@ const serviceAgentSchema = new mongoose.Schema({
     totalEnquiriesClosed: {
         type: Number,
         default: 0
+    },
+    location: {
+        type: {
+            type: String,
+            enum: ['Point'],
+            default: 'Point'
+        },
+        coordinates: {
+            type: [Number], // Stored as [longitude, latitude] per GeoJSON specifications
+            default: [0, 0]
+        }
     }
 }, {
     timestamps: true,   // Automatically creates createdAt and updatedAt fields
     versionKey: false
 });
 
-
+serviceAgentSchema.index({ location: '2dsphere' });
 const ServiceAgent = mongoose.model('ServiceAgent', serviceAgentSchema);
 module.exports = ServiceAgent;

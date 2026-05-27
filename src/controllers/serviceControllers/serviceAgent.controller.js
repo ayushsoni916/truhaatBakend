@@ -163,8 +163,59 @@ const verifyAgentOtp = async (req, res) => {
     }
 };
 
+// Add this method to serviceAgent.controller.js
+const updateAgentLocation = async (req, res) => {
+    try {
+        const { latitude, longitude } = req.body;
+        const agentId = req.agent.sub; // Extracted safely from our Auth Middleware layer
+        // console.log(`Received location update from Agent ${agentId}: lat=${latitude}, lng=${longitude}`);
+
+        if (latitude === undefined || longitude === undefined) {
+            return res.status(400).json({ success: false, error: 'Latitude and Longitude parameters are required.' });
+        }
+
+        // Parse coordinates to strict floating numbers
+        const lat = parseFloat(latitude);
+        const lng = parseFloat(longitude);
+
+        // Basic validation bounds check
+        if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+            return res.status(400).json({ success: false, error: 'Invalid coordinate values supplied.' });
+        }
+
+        const updatedAgent = await ServiceAgent.findByIdAndUpdate(
+            agentId,
+            {
+                location: {
+                    type: 'Point',
+                    coordinates: [lng, lat] // Longitude always goes FIRST inside GeoJSON arrays
+                }
+            },
+            { new: true }
+        );
+
+        if (!updatedAgent) {
+            return res.status(404).json({ success: false, error: 'Service Agent profile not found.' });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: 'Agent baseline work location matrix configured successfully.',
+            data: {
+                coordinates: updatedAgent.location.coordinates
+            }
+        });
+
+    } catch (error) {
+        console.error('updateAgentLocation Error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error while saving spatial context.' });
+    }
+};
+
+
 module.exports = {
     onboardAgentByAdmin,
     sendAgentOtp,
-    verifyAgentOtp
+    verifyAgentOtp,
+    updateAgentLocation
 };
