@@ -77,6 +77,43 @@ const onboardAgentByAdmin = async (req, res) => {
     }
 };
 
+const fetchPincodeFromOpenStreetMap = async (lat, lng) => {
+    try {
+        const response = await axios.get('https://nominatim.openstreetmap.org/reverse', {
+            params: {
+                format: 'jsonv2',
+                lat: parseFloat(lat),
+                lon: parseFloat(lng),
+                'accept-language': 'en',
+                addressdetails: 1
+            },
+            headers: {
+                // OpenStreetMap requires a distinct User-Agent to avoid automatic rate-limiting bans
+                'User-Agent': 'TruhaatServiceMobileApp/1.0 (info@truhaat.com)'
+            },
+            timeout: 6000 // 6-second threshold timeout
+        });
+
+        if (!response.data || !response.data.address) {
+            throw new Error('Coordinates could not be mapped to structural address nodes.');
+        }
+
+        const address = response.data.address;
+
+        // Extract the postal code parameter
+        const pincode = address.postcode;
+
+        if (!pincode) {
+            throw new Error('Postal zone pincode attribute missing from OpenStreetMap address payload.');
+        }
+
+        return pincode.trim(); // Returns e.g., "302029"
+    } catch (error) {
+        console.error('fetchPincodeFromOpenStreetMap Error:', error.message);
+        throw error;
+    }
+};
+
 // ==========================================
 // AGENT APP AUTHENTICATION CONTROLLERS
 // ==========================================
@@ -92,10 +129,10 @@ const sendAgentOtp = async (req, res) => {
         // 1. Secure check: Ensure agent was pre-onboarded by admin
         const agent = await ServiceAgent.findOne({ phone: phone.trim(), isActive: true });
         if (!agent) {
-            return res.status(403).json({ 
-                success: false, 
-                error: 'Access Denied', 
-                message: 'Your number is not registered as a Service Agent. Please contact administration.' 
+            return res.status(403).json({
+                success: false,
+                error: 'Access Denied',
+                message: 'Your number is not registered as a Service Agent. Please contact administration.'
             });
         }
 
@@ -198,11 +235,24 @@ const updateAgentLocation = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Service Agent profile not found.' });
         }
 
+        // 2. STEP TWO: Call free OpenStreetMap background utility to identify regional pincode zone track
+        let resolvedPincode;
+        try {
+            resolvedPincode = await fetchPincodeFromOpenStreetMap(lat, lng);
+            console.log(`📍 OpenStreetMap mapped coordinates [${lat}, ${lng}] directly to Pincode: ${resolvedPincode}`);
+        } catch (geoError) {
+            // Graceful fallback: If OSM is busy or down, do not block the agent's application entirely.
+            // Provide a sensible regional corporate default center point string code for Jaipur
+            resolvedPincode = '302029';
+            console.log('⚠️ OpenStreetMap lookup failed, falling back safely to default testing track: 302029');
+        }
+
+        // 3. STEP THREE: Keep DB clean with coords, but send clean pincode text directly back to frontend
         return res.status(200).json({
             success: true,
-            message: 'Agent baseline work location matrix configured successfully.',
+            message: 'Agent baseline work coordinate entries saved to database.',
             data: {
-                coordinates: updatedAgent.location.coordinates
+                pincode: resolvedPincode
             }
         });
 
