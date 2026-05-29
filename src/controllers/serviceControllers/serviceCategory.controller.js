@@ -175,10 +175,13 @@ const createSubService = async (req, res) => {
 
 const addLocationPrice = async (req, res) => {
     try {
-        const { subServiceId, pincode, price } = req.body;
+        const { subServiceId, country, state, city, pincode, price } = req.body;
 
-        if (!subServiceId || !pincode || price === undefined) {
-            return res.status(400).json({ success: false, error: 'subServiceId, pincode, and price are required' });
+        if (!subServiceId || !state || !city || !pincode || price === undefined) {
+            return res.status(400).json({
+                success: false,
+                error: 'subServiceId, state, city, pincode, and price are required'
+            });
         }
 
         const cleanPincode = pincode.trim();
@@ -193,19 +196,30 @@ const addLocationPrice = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Target sub-service item not found' });
         }
 
-        // 2. Prevent duplicate price overlapping rules for the same item in the same pincode
+        // 2. Standardize inputs to case-insensitive variants
+        const cleanCountry = country ? country.trim().toLowerCase() : 'india';
+        const cleanState = state.trim().toLowerCase();
+        const cleanCity = city.trim().toLowerCase();
+
+        // 3. Prevent duplicate price overlapping rules
         const existingPrice = await ServicePriceBook.findOne({
             subService: subServiceId,
+            country: cleanCountry,
+            state: cleanState,
+            city: cleanCity,
             pincode: cleanPincode
         });
 
         if (existingPrice) {
-            return res.status(400).json({ success: false, error: 'A price entry already exists for this item inside this pincode cluster' });
+            return res.status(400).json({ success: false, error: 'A price entry already exists for this item inside this location layout' });
         }
 
         // 3. Persist record cleanly
         const priceRecord = await ServicePriceBook.create({
             subService: subServiceId,
+            country: cleanCountry,
+            state: cleanState,
+            city: cleanCity,
             pincode: cleanPincode,
             price: Number(price)
         });
@@ -293,6 +307,74 @@ const getPriceBookBySubService = async (req, res) => {
     }
 };
 
+const getUniversalPriceBookGrid = async (req, res) => {
+    try {
+        const { subServiceId, country, state, city, pincode } = req.body;
+
+        // 1. Initialize an empty dynamic query condition criteria map
+        const queryCondition = { isActive: true };
+
+        // 2. Conditionally mount filter locks based explicitly on body parameter input presence
+        if (subServiceId) {
+            queryCondition.subService = subServiceId;
+        }
+
+        if (country) {
+            queryCondition.country = country.trim().toLowerCase();
+        }
+
+        if (state) {
+            queryCondition.state = state.trim().toLowerCase();
+        }
+
+        if (city) {
+            queryCondition.city = city.trim().toLowerCase();
+        }
+
+        if (pincode) {
+            const cleanPincode = pincode.trim();
+            if (cleanPincode.length > 0) {
+                queryCondition.pincode = cleanPincode;
+            }
+        }
+
+        console.log("🚀 Executing Universal Grid Search with Conditions:", queryCondition);
+
+        // 3. Fetch matching data rows from MongoDB, populating the base item schema properties safely
+        const priceGridRecords = await ServicePriceBook.find(queryCondition)
+            .populate({
+                path: 'subService',
+                select: 'name description subcategory'
+            })
+            .sort({ country: 1, state: 1, city: 1, pincode: 1 });
+
+        // 4. Format return payload structure to map cleanly directly into your dashboard data-tables
+        const formattedGrid = priceGridRecords.map(record => ({
+            priceBookId: record._id,
+            subServiceId: record.subService?._id || null,
+            subServiceName: record.subService?.name || 'Unlinked Base Item',
+            subServiceDescription: record.subService?.description || '',
+            country: record.country,
+            state: record.state,
+            city: record.city,
+            pincode: record.pincode,
+            price: record.price,
+            isActive: record.isActive,
+            updatedAt: record.updatedAt
+        }));
+
+        return res.json({
+            success: true,
+            totalRecordsFound: formattedGrid.length,
+            data: formattedGrid
+        });
+
+    } catch (error) {
+        console.error('getUniversalPriceBookGrid Error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error compiling universal matrix grid paths.' });
+    }
+};
+
 module.exports = {
     createCategory,
     getAllCategories,
@@ -302,5 +384,6 @@ module.exports = {
     createSubService,
     addLocationPrice,
     getSubServicesBySubcategory,
-    getPriceBookBySubService
+    getPriceBookBySubService,
+    getUniversalPriceBookGrid
 };

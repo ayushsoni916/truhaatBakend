@@ -7,6 +7,28 @@ const servicePriceBookSchema = new mongoose.Schema({
         required: true,
         index: true
     },
+    country: {
+        type: String,
+        required: true,
+        trim: true,
+        lowercase: true,
+        default: 'india',
+        index: true
+    },
+    state: {
+        type: String,
+        required: true,
+        trim: true,
+        lowercase: true,
+        index: true
+    },
+    city: {
+        type: String,
+        required: true,
+        trim: true,
+        lowercase: true,
+        index: true
+    },
     // The single production source of truth for location matching
     pincode: {
         type: String,
@@ -31,7 +53,7 @@ const servicePriceBookSchema = new mongoose.Schema({
 
 // Compound unique constraint to guarantee no duplicate prices can be assigned to the exact same item within the same pincode zone
 servicePriceBookSchema.index(
-    { subService: 1, pincode: 1 }, 
+    { subService: 1, country: 1, state: 1, city: 1, pincode: 1 },
     { unique: true }
 );
 

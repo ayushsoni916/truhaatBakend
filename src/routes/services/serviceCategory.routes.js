@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const { createCategory, getAllCategories, createSubcategory, getSubcategoriesByParent, createSubService, addLocationPrice, getAvailableServicesByLocation, getSubServicesBySubcategory, getPriceBookBySubService } = require('../../controllers/serviceControllers/serviceCategory.controller');
+const { createCategory, getAllCategories, createSubcategory, getSubcategoriesByParent, createSubService, addLocationPrice, getAvailableServicesByLocation, getSubServicesBySubcategory, getPriceBookBySubService, getUniversalPriceBookGrid } = require('../../controllers/serviceControllers/serviceCategory.controller');
 const serviceRouter = express.Router();
 
 // Multer parsing configuration
@@ -28,5 +28,6 @@ serviceRouter.post('/resolve-availability', getAvailableServicesByLocation);
 // Append these underneath your existing serviceCategory routing paths:
 serviceRouter.get('/sub-services/by-subcategory/:subcategoryId', getSubServicesBySubcategory);
 serviceRouter.get('/price-book/by-subservice/:subServiceId', getPriceBookBySubService);
+serviceRouter.post('/price-book/inspect-grid', getUniversalPriceBookGrid);
 
 module.exports = serviceRouter;
