@@ -138,6 +138,7 @@ const sendAgentOtp = async (req, res) => {
 
         // 2. Generate generic system OTP using your service helper
         const { code } = await createOtpForPhone(phone.trim());
+        console.log(`Generated OTP for ${phone.trim()}: ${code}`);
 
         // 3. Fire message via gateway
         await sendSmsIndiaHub(phone.trim(), code);

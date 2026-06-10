@@ -20,8 +20,9 @@ const getLiveAvailableServices = async (req, res) => {
 
         // Find all online and active agents within a 5km radius
         const nearbyAgents = await ServiceAgent.find({
-            isOnline: true,
-            isActive: true,
+            // uncomment these lines if you want to filter by online/active status as well
+            // isOnline: true,
+            // isActive: true,
             location: {
                 $nearSphere: {
                     $geometry: {
