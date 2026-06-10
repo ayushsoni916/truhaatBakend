@@ -262,10 +262,46 @@ const updateAgentLocation = async (req, res) => {
     }
 };
 
+// ==========================================
+// NEW: TOGGLE ONLINE / OFFLINE STATUS
+// ==========================================
+const toggleAgentOnlineStatus = async (req, res) => {
+    try {
+        const { isOnline } = req.body;
+        const agentId = req.agent._id || req.agent.sub; // Handled dynamically based on token middleware extract
+
+        if (isOnline === undefined || typeof isOnline !== 'boolean') {
+            return res.status(400).json({ success: false, error: "The 'isOnline' parameter must be a boolean (true/false)." });
+        }
+
+        const updatedAgent = await ServiceAgent.findByIdAndUpdate(
+            agentId,
+            { isOnline },
+            { new: true }
+        );
+
+        if (!updatedAgent) {
+            return res.status(404).json({ success: false, error: 'Service Agent profile not found.' });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: `Agent is now ${updatedAgent.isOnline ? 'Online' : 'Offline'}.`,
+            data: {
+                isOnline: updatedAgent.isOnline
+            }
+        });
+    } catch (error) {
+        console.error('toggleAgentOnlineStatus Error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error while updating status.' });
+    }
+};
+
 
 module.exports = {
     onboardAgentByAdmin,
     sendAgentOtp,
     verifyAgentOtp,
-    updateAgentLocation
+    updateAgentLocation,
+    toggleAgentOnlineStatus
 };

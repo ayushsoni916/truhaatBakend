@@ -41,6 +41,11 @@ const serviceAgentSchema = new mongoose.Schema({
         default: true,
         index: true
     },
+    isOnline: {
+        type: Boolean,
+        default: true,
+        index: true
+    },
     // Metrics tracked automatically as they process transactions
     totalEnquiriesActive: {
         type: Number,
