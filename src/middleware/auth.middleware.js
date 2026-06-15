@@ -4,6 +4,7 @@ const { verifyToken } = require("../services/jwt.service");
 const requireAuth = async (req, res, next) => {
     try {
         const authHeader = req.headers['authorization'] || req.headers['Authorization'];
+        console.log("auth header", authHeader)
 
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return res.status(401).json({ error: 'Authorization header missing or invalid' });

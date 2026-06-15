@@ -3,6 +3,7 @@ const ServiceCategory = require('../../models/ServiceModel/serviceCategory.model
 const ServiceSubService = require('../../models/ServiceModel/serviceSubService.model');
 const ServicePriceBook = require('../../models/ServiceModel/servicePriceBook.model');
 const ServiceBooking = require('../../models/ServiceModel/serviceBooking.model'); // Make sure you created this model!
+const ServiceSubcategory = require('../../models/ServiceModel/serviceSubcategory.model');
 
 // =========================================================
 // 1. GET AVAILABLE SERVICES BASED ON LIVE NEARBY AGENTS
@@ -10,6 +11,7 @@ const ServiceBooking = require('../../models/ServiceModel/serviceBooking.model')
 const getLiveAvailableServices = async (req, res) => {
     try {
         const { latitude, longitude } = req.body;
+        console.log(latitude, longitude)
 
         if (latitude === undefined || longitude === undefined) {
             return res.status(400).json({ success: false, error: 'User coordinates (latitude & longitude) are required.' });
@@ -29,7 +31,7 @@ const getLiveAvailableServices = async (req, res) => {
                         type: 'Point',
                         coordinates: [lng, lat]
                     },
-                    $maxDistance: 5000 // 5 Kilometers
+                    $maxDistance: 50000 // 50 Kilometers 
                 }
             }
         }).select('allowedCategory');
@@ -68,10 +70,13 @@ const getLiveAvailableServices = async (req, res) => {
 // =========================================================
 const bookServiceInstant = async (req, res) => {
     try {
-        const { subServiceId, pincode, latitude, longitude } = req.body;
+        console.log("api called")
+        const { subServiceId, pincode, latitude, longitude, houseNumber, streetAddress } = req.body;
         const userId = req.user._id; // Extracted from your requireAuth middleware layer
+        console.log(subServiceId, pincode, latitude, longitude, houseNumber, streetAddress)
 
-        if (!subServiceId || !pincode || latitude === undefined || longitude === undefined) {
+        if (!subServiceId || !pincode || latitude === undefined || longitude === undefined || houseNumber === undefined || streetAddress === undefined) {
+            console.log("we are here")
             return res.status(400).json({ success: false, error: 'subServiceId, pincode, and coordinates are required.' });
         }
 
@@ -80,43 +85,47 @@ const bookServiceInstant = async (req, res) => {
         const cleanPincode = pincode.trim();
 
         // 1. Verify the sub-service exists and get its details
-        const subService = await ServiceSubService.findById(subServiceId).populate('subcategory');
+        const subService = await ServiceSubcategory.findById(subServiceId);
+        console.log("sub service", subService)
         if (!subService || !subService.isActive) {
             return res.status(404).json({ success: false, error: 'Requested service item is unavailable or inactive.' });
         }
 
-        const parentCategoryId = subService.subcategory.parentCategory;
+        const parentCategoryId = subService.parentCategory;
+        console.log(parentCategoryId, "is here")
 
         // 2. Fetch price from the price book for this specific pincode
-        const priceMatch = await ServicePriceBook.findOne({
-            subService: subServiceId,
-            pincode: cleanPincode,
-            isActive: true
-        });
+        // const priceMatch = await ServicePriceBook.findOne({
+        //     subService: subServiceId,
+        //     pincode: cleanPincode,
+        //     isActive: true
+        // });
 
-        if (!priceMatch) {
-            return res.status(404).json({
-                success: false,
-                error: 'PRICE_NOT_FOUND',
-                message: 'Pricing has not been configured for this service item in your pincode.'
-            });
-        }
+        // if (!priceMatch) {
+        //     return res.status(404).json({
+        //         success: false,
+        //         error: 'PRICE_NOT_FOUND',
+        //         message: 'Pricing has not been configured for this service item in your pincode.'
+        //     });
+        // }
 
         // 3. Find all online matching providers within 5km, sorted by workload
         const eligibleAgents = await ServiceAgent.find({
             allowedCategory: parentCategoryId,
-            isOnline: true,
-            isActive: true,
+            // isOnline: true,
+            // isActive: true,
             location: {
                 $nearSphere: {
                     $geometry: {
                         type: 'Point',
                         coordinates: [lng, lat]
                     },
-                    $maxDistance: 5000
+                    $maxDistance: 50000// here change to 5km 5000
                 }
             }
         }).sort({ totalEnquiriesActive: 1 }); // Least busy agent comes first
+
+        console.log("eligibleAgents", eligibleAgents)
 
         if (eligibleAgents.length === 0) {
             return res.status(404).json({
@@ -125,6 +134,7 @@ const bookServiceInstant = async (req, res) => {
                 message: 'All matching providers in your 5km area just went offline.'
             });
         }
+        console.log("eligibleAgents", eligibleAgents)
 
         const selectedAgent = eligibleAgents[0];
 
@@ -132,36 +142,40 @@ const bookServiceInstant = async (req, res) => {
         const generatedOtp = Math.floor(1000 + Math.random() * 9000).toString();
 
         // 5. Create the secure transactional booking record
-        const newBooking = await ServiceBooking.create({
-            user: userId,
-            agent: selectedAgent._id,
-            subService: subServiceId,
-            pincode: cleanPincode,
-            bookingLocation: {
-                type: 'Point',
-                coordinates: [lng, lat]
-            },
-            finalPrice: priceMatch.price,
-            completionOtp: generatedOtp,
-            status: 'PENDING'
-        });
+        // const newBooking = await ServiceBooking.create({
+        //     user: userId,
+        //     agent: selectedAgent._id,
+        //     subService: subServiceId,
+        //     pincode: cleanPincode,
+        //     bookingLocation: {
+        //         type: 'Point',
+        //         coordinates: [lng, lat]
+        //     },
+        //     finalPrice: priceMatch.price,
+        //     completionOtp: generatedOtp,
+        //     status: 'PENDING'
+        // });
 
-        // 6. Increment the agent's active workload counter atomically
-        await ServiceAgent.findByIdAndUpdate(selectedAgent._id, {
-            $inc: { totalEnquiriesActive: 1 }
-        });
+        // // 6. Increment the agent's active workload counter atomically
+        // await ServiceAgent.findByIdAndUpdate(selectedAgent._id, {
+        //     $inc: { totalEnquiriesActive: 1 }
+        // });
 
+        // return res.status(201).json({
+        //     success: true,
+        //     message: 'Service booked and assigned successfully!',
+        //     bookingId: newBooking._id,
+        //     completionOtp: generatedOtp,
+        //     assignedAgent: {
+        //         firstName: selectedAgent.firstName,
+        //         lastName: selectedAgent.lastName,
+        //         phone: selectedAgent.phone
+        //     }
+        // });
         return res.status(201).json({
             success: true,
-            message: 'Service booked and assigned successfully!',
-            bookingId: newBooking._id,
-            completionOtp: generatedOtp,
-            assignedAgent: {
-                firstName: selectedAgent.firstName,
-                lastName: selectedAgent.lastName,
-                phone: selectedAgent.phone
-            }
-        });
+            message: "Success"
+        })
 
     } catch (error) {
         console.error('bookServiceInstant Error:', error);

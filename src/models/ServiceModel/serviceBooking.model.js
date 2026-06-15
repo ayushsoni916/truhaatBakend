@@ -14,13 +14,25 @@ const serviceBookingSchema = new mongoose.Schema({
     },
     subService: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'ServiceSubService',
+        ref: 'ServiceSubcategory',
         required: true
     },
     pincode: {
         type: String,
         required: true,
         index: true
+    },
+    addressDetails: {
+        houseNumber: {
+            type: String,
+            required: true,
+            trim: true
+        },
+        streetAddress: {
+            type: String,
+            required: true,
+            trim: true
+        }
     },
     bookingLocation: {
         type: {
@@ -32,10 +44,6 @@ const serviceBookingSchema = new mongoose.Schema({
             type: [Number], // [longitude, latitude]
             required: true
         }
-    },
-    finalPrice: {
-        type: Number,
-        required: true
     },
     completionOtp: {
         type: String,
