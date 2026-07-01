@@ -4,6 +4,13 @@ const ServiceSubService = require('../../models/ServiceModel/serviceSubService.m
 const ServicePriceBook = require('../../models/ServiceModel/servicePriceBook.model');
 const ServiceBooking = require('../../models/ServiceModel/serviceBooking.model'); // Make sure you created this model!
 const ServiceSubcategory = require('../../models/ServiceModel/serviceSubcategory.model');
+const Razorpay = require('razorpay');
+
+
+const razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
 
 // =========================================================
 // 1. GET AVAILABLE SERVICES BASED ON LIVE NEARBY AGENTS
@@ -257,9 +264,192 @@ const completeServiceWithOtp = async (req, res) => {
     }
 };
 
+// 5 create service booking order 
+const createServiceBookingOrder = async (req, res) => {
+    try {
+        const { subServiceId, pincode, latitude, longitude, houseNumber, streetAddress } = req.body;
+        const userId = req.user._id || req.user.id;
+
+        if (!subServiceId || !pincode || latitude === undefined || longitude === undefined) {
+            return res.status(400).json({ success: false, error: 'Required booking details missing.' });
+        }
+
+        const lat = parseFloat(latitude);
+        const lng = parseFloat(longitude);
+        const cleanPincode = pincode.trim();
+
+        // 1. Verify sub-service
+        const subService = await ServiceSubcategory.findById(subServiceId);
+        if (!subService || !subService.isActive) {
+            return res.status(404).json({ success: false, error: 'Requested service item is unavailable.' });
+        }
+
+        // 2. IMPORTANT: Check if agents are actually available BEFORE taking payment
+        const eligibleAgents = await ServiceAgent.find({
+            allowedCategory: subService.parentCategory,
+            location: {
+                $nearSphere: {
+                    $geometry: { type: 'Point', coordinates: [lng, lat] },
+                    $maxDistance: 5000 // 5km
+                }
+            }
+        });
+
+        if (eligibleAgents.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'NO_AGENTS_AVAILABLE',
+                message: 'All matching providers in your 5km area just went offline. Please try again later.'
+            });
+        }
+
+        // 3. Define pricing (Hardcoded to 1 for testing, or fetch from ServicePriceBook)
+        const calculatedAmount = 1;
+
+        // 4. Create Razorpay Order
+        const options = {
+            amount: Math.round(calculatedAmount * 100), // Paise
+            currency: "INR",
+            receipt: `rcpt_srv_${Date.now()}`,
+        };
+        const razorOrder = await razorpay.orders.create(options);
+
+        // 5. Store pending payment with all booking metadata
+        const newPayment = await paymentModel.create({
+            userId,
+            razorpayOrderId: razorOrder.id,
+            amount: calculatedAmount,
+            currency: 'INR',
+            status: 'Pending',
+            paymentType: 'ServiceBooking',
+            metadata: {
+                subServiceId,
+                pincode: cleanPincode,
+                latitude: lat,
+                longitude: lng,
+                houseNumber,
+                streetAddress
+            }
+        });
+
+        return res.status(200).json({
+            success: true,
+            id: razorOrder.id,
+            amount: razorOrder.amount,
+            currency: razorOrder.currency,
+            localPaymentId: newPayment._id
+        });
+    } catch (error) {
+        console.error('createServiceBookingOrder Error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error processing booking order.' });
+    }
+}
+
+// =========================================================
+// WEBHOOK WORKER: ACTUALLY ASSIGN AGENT & CREATE BOOKING
+// =========================================================
+const processServiceBooking = async (userId, metadata) => {
+    try {
+        const { subServiceId, pincode, latitude, longitude, houseNumber, streetAddress } = metadata;
+
+        const subService = await ServiceSubcategory.findById(subServiceId);
+
+        // Find best agent (Least busy)
+        const eligibleAgents = await ServiceAgent.find({
+            allowedCategory: subService.parentCategory,
+            location: {
+                $nearSphere: {
+                    $geometry: { type: 'Point', coordinates: [longitude, latitude] },
+                    $maxDistance: 5000
+                }
+            }
+        }).sort({ totalEnquiriesActive: 1 });
+
+        if (eligibleAgents.length === 0) {
+            // EDGE CASE: Agents went offline during the 1-2 minutes the user was paying.
+            // You should ideally implement a refund logic or queue system here.
+            throw new Error("No agents available at the time of payment completion.");
+        }
+
+        const selectedAgent = eligibleAgents[0];
+        const generatedOtp = Math.floor(1000 + Math.random() * 9000).toString();
+
+        // Create the transactional booking
+        const newBooking = await ServiceBooking.create({
+            user: userId,
+            agent: selectedAgent._id,
+            subService: subServiceId,
+            pincode,
+            addressDetails: { houseNumber, streetAddress }, // Ensure schema matches
+            bookingLocation: {
+                type: 'Point',
+                coordinates: [longitude, latitude]
+            },
+            completionOtp: generatedOtp,
+            status: 'PENDING'
+        });
+
+        // Increment the agent's workload
+        await ServiceAgent.findByIdAndUpdate(selectedAgent._id, {
+            $inc: { totalEnquiriesActive: 1 }
+        });
+
+        console.log(`✅ Service Booking ${newBooking._id} assigned to Agent ${selectedAgent._id}`);
+        return newBooking;
+    } catch (error) {
+        console.error('Worker Error in processServiceBooking:', error);
+        throw error; // Let the webhook controller handle the crash
+    }
+}
+
+// =========================================================
+// 6. GET USER'S SERVICE BOOKING HISTORY
+// =========================================================
+const getUserServiceHistory = async (req, res) => {
+    try {
+        const userId = req.user._id || req.user.id; // From your auth middleware
+        const { status } = req.query; // e.g., /api/bookings?status=PENDING
+
+        // Build the query
+        let query = { user: userId };
+
+        // If frontend passes a status filter, apply it
+        if (status) {
+            query.status = status.toUpperCase();
+        }
+
+        // Fetch bookings, sorted by newest first
+        const bookings = await ServiceBooking.find(query)
+            .populate('agent', 'firstName lastName phone allowedCategory') // Bring in agent details
+            .populate({
+                path: 'subService',
+                select: 'name description parentCategory',
+                populate: { path: 'parentCategory', select: 'name' } // Nested populate if you want category name
+            })
+            .sort({ createdAt: -1 });
+
+        return res.status(200).json({
+            success: true,
+            message: 'Service history fetched successfully.',
+            totalBookings: bookings.length,
+            data: bookings
+        });
+
+    } catch (error) {
+        console.error('getUserServiceHistory Error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Internal server error while fetching service history.'
+        });
+    }
+};
+
 module.exports = {
     getLiveAvailableServices,
     bookServiceInstant,
     getAgentPendingEnquiries,
-    completeServiceWithOtp
+    completeServiceWithOtp,
+    createServiceBookingOrder, // <-- Expose this to your Express Routes
+    processServiceBooking,
+    getUserServiceHistory
 };

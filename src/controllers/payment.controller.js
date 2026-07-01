@@ -5,6 +5,7 @@ const Plan = require('../models/plan.model');
 const User = require('../models/user.model');
 const PlanPurchase = require('../models/planPurchase.model');
 const { processPlanActivation, processCashbackCardActivation } = require('./plan.controller');
+const { processServiceBooking } = require('./serviceControllers/serviceBooking.controller');
 
 const razorpay = new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID,
@@ -165,6 +166,15 @@ exports.handleWebhook = async (req, res) => {
                         targetPaymentId
                     );
                     console.log(`✅ Membership activation loop processed cleanly.`);
+
+                    console.log(`🎁 Membership includes Cashback Card. Activating complimentary card now...`);
+                    await processCashbackCardActivation(
+                        paymentDoc.userId,
+                        targetOrderId,
+                        targetPaymentId
+                    );
+                    console.log(`✅ Complimentary Cashback Card wallet and access privileges successfully activated.`);
+
                 } catch (activationError) {
                     console.error(`❌ Plan worker error during webhook lifecycle:`, activationError.message);
                 }
@@ -180,6 +190,20 @@ exports.handleWebhook = async (req, res) => {
                     console.log(`✅ Cashback Card wallet and access privileges successfully activated.`);
                 } catch (err) {
                     console.error(`❌ Cashback Card activation worker failure:`, err.message);
+                }
+            }
+            else if (paymentDoc.paymentType === 'ServiceBooking') {
+                console.log(`🎯 Context matches 'ServiceBooking'. Activating worker function...`);
+                try {
+                    await processServiceBooking(
+                        paymentDoc.userId,
+                        paymentDoc.metadata
+                    );
+                    console.log(`✅ Service Booking successfully activated and assigned.`);
+                } catch (err) {
+                    console.error(`❌ Service Booking worker failure:`, err.message);
+                    // Depending on your business logic, you might want to trigger an auto-refund here 
+                    // if the worker fails (e.g., if no agents were available post-payment).
                 }
             }
         }
