@@ -4,6 +4,7 @@ const ServiceSubService = require('../../models/ServiceModel/serviceSubService.m
 const ServicePriceBook = require('../../models/ServiceModel/servicePriceBook.model');
 const ServiceBooking = require('../../models/ServiceModel/serviceBooking.model'); // Make sure you created this model!
 const ServiceSubcategory = require('../../models/ServiceModel/serviceSubcategory.model');
+const paymentModel = require('../../models/payment.model');
 const Razorpay = require('razorpay');
 
 

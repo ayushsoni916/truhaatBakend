@@ -6,7 +6,7 @@ const paymentSchema = new mongoose.Schema({
   amount: { type: Number, required: true }, // Store in Rupees or Paise (be consistent)
   currency: { type: String, default: 'INR' },
   status: { type: String, enum: ['Pending', 'Success', 'Failed'], default: 'Pending' },
-  paymentType: { type: String, enum: ['StoreOrder', 'Membership', 'CashbackCard'], required: true },
+  paymentType: { type: String, enum: ['StoreOrder', 'Membership', 'CashbackCard', 'ServiceBooking'], required: true },
   metadata: {
     productId: { type: mongoose.Schema.Types.ObjectId }, // If StoreOrder
     planId: { type: mongoose.Schema.Types.ObjectId },    // If Membership
