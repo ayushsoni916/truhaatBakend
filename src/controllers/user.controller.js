@@ -131,4 +131,23 @@ const getKycData = async (req, res, next) => {
     }
 };
 
-module.exports = { createUser, updateProfileUnified, getKycData };
+const getMe = async (req, res, next) => {
+    try {
+        const userId = req.user.id;
+
+        const user = await User.findById(userId).select('-password -__v');
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: "User not found" });
+        }
+
+        res.status(200).json({
+            success: true,
+            user
+        });
+    } catch (error) {
+        next(error);
+    }
+}
+
+module.exports = { createUser, updateProfileUnified, getKycData, getMe };

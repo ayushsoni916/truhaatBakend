@@ -1,3 +1,4 @@
+const cashbackWalletModel = require("../models/cashbackWallet.model");
 const Plan = require("../models/plan.model");
 const PlanPurchase = require("../models/planPurchase.model");
 const User = require("../models/user.model");
@@ -174,10 +175,83 @@ const purchasePlan = async (req, res) => {
         return res.status(500).json({ error: 'Internal server error' });
     }
 };
+const processPlanActivation = async (userId, planId, razorpayOrderId = null, razorpayPaymentId = null) => {    // console.log("REQ.USER =", req.user);
+    const user = await User.findById(userId);
+    if (!user) throw new Error('User not found');
+
+    if (user.currentPlan) throw new Error('User has already bought a plan');
+
+    const plan = await Plan.findById(planId);
+    if (!plan || !plan.isActive) throw new Error('Invalid or inactive plan');
+
+    if (razorpayOrderId) {
+        const structuralCheck = await PlanPurchase.findOne({ razorpayOrderId });
+        if (structuralCheck) return { alreadyProcessed: true, user };
+    }
+    // Create purchase record
+    const purchase = await PlanPurchase.create({
+        user: user._id,
+        plan: plan._id,
+        amount: plan.price,
+        razorpayOrderId: razorpayOrderId,
+        razorpayPaymentId: razorpayPaymentId,
+        paidAt: new Date()
+    });
+
+    // Update user plan info (no expiry for now)
+    // Commit changes directly to User profile parameters
+    user.currentPlan = plan._id;
+    user.planActivatedAt = new Date();
+    user.planExpiresAt = null;
+    await user.save();
+
+    // Trigger downline Multi-Level Marketing matrices
+    await handlePlanPurchase(user, plan, purchase);
+
+    return { purchase, user };
+};
+
+const processCashbackCardActivation = async (userId, razorpayOrderId, razorpayPaymentId) => {
+    const user = await User.findById(userId);
+    if (!user) throw new Error('User not found');
+
+    // Idempotency: Avoid double activation cycles
+    if (user.hasActiveCashbackCard) {
+        return { alreadyActive: true, user };
+    }
+
+    // 1. Flip active status flags on the User Document
+    user.hasActiveCashbackCard = true;
+    user.cashbackCardActivatedAt = new Date();
+    await user.save();
+
+    // 2. Initialize or find the independent Loyalty Points Wallet
+    let wallet = await cashbackWalletModel.findOne({ userId: user._id });
+    if (!wallet) {
+        wallet = await cashbackWalletModel.create({
+            userId: user._id,
+            pointsBalance: 0,
+            lifetimePointsEarned: 0
+        });
+    }
+
+    // 3. Drop an activation footprint trace log row into your point ledger history
+    await cashbackTransactionModel.create({
+        userId: user._id,
+        amount: 0,
+        type: 'CREDIT',
+        description: 'Cashback Card Membership Activated',
+        razorpayOrderId: razorpayOrderId
+    });
+
+    return { success: true, user };
+};
 
 module.exports = {
     createPlan,
     getPlans,
     purchasePlan,
+    processPlanActivation,
+    processCashbackCardActivation,
     getSubAdminPlans
 };

@@ -18,6 +18,14 @@ const planPurchaseSchema = new mongoose.Schema({
         required: true,
         min: 0
     },
+    razorpayOrderId: {
+        type: String,
+        sparse: true, // Allows null/empty values for manual or non-gateway entries if needed
+        index: true
+    },
+    razorpayPaymentId: {
+        type: String
+    },
     paidAt: {
         type: Date,
         default: Date.now

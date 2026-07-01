@@ -125,7 +125,11 @@ const userSchema = new mongoose.Schema({
     planExpiresAt: {
         type: Date,
         default: null
-    }
+    },
+
+    //cashback card info
+    hasActiveCashbackCard: { type: Boolean, default: false, index: true },
+    cashbackCardActivatedAt: { type: Date, default: null }
 
 }, {
     timestamps: true,   // createdAt + updatedAt 

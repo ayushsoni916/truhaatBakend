@@ -45,7 +45,7 @@ const sendOtp = async (req, res) => {
         const { code, expiresAt } = await createOtpForPhone(phone)
 
         // Here you'd call your SMS provider. For now we log in dev:
-        // console.log(`DEV OTP for ${phone}: ${code}, expiresAt=${expiresAt.toISOString()}`);
+        console.log(`DEV OTP for ${phone}: ${code}, expiresAt=${expiresAt.toISOString()}`);
 
         // In production, you would call the SMS provider here:
         // await sendSmsIndiaHub(phone, code);

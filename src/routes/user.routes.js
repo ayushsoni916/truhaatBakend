@@ -1,6 +1,6 @@
 const express = require('express')
 const multer = require('multer');
-const { createUser, updateProfileUnified, getKycData } = require('../controllers/user.controller');
+const { createUser, updateProfileUnified, getKycData, getMe } = require('../controllers/user.controller');
 const { requireAuth } = require('../middleware/auth.middleware');
 
 const userRouter = express.Router()
@@ -12,5 +12,6 @@ const upload = multer({ storage });
 userRouter.post('/', createUser)
 userRouter.put('/update', requireAuth, upload.single('photo'), updateProfileUnified);
 userRouter.get('/kyc-status', requireAuth, getKycData);
+userRouter.get('/me', requireAuth, getMe);
 
 module.exports = userRouter
