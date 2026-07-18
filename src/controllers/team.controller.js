@@ -101,10 +101,10 @@ const getTeamOverview = async (req, res) => {
         role: user.role,
         currentPlan: user.currentPlan
           ? {
-              id: user.currentPlan._id,
-              name: user.currentPlan.name,
-              price: user.currentPlan.price
-            }
+            id: user.currentPlan._id,
+            name: user.currentPlan.name,
+            price: user.currentPlan.price
+          }
           : null,
         referralCode: user.referralCode
       },
@@ -240,10 +240,10 @@ const getTeamLevel = async (req, res) => {
         lastPurchaseAt,
         currentPlan: u.currentPlan
           ? {
-              id: u.currentPlan._id,
-              name: u.currentPlan.name,
-              price: u.currentPlan.price
-            }
+            id: u.currentPlan._id,
+            name: u.currentPlan.name,
+            price: u.currentPlan.price
+          }
           : null,
         revenueForLeader
       };
@@ -261,7 +261,139 @@ const getTeamLevel = async (req, res) => {
   }
 };
 
+const getAdminNetworkLeaders = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const roleFilter = req.query.role || 'ALL';
+
+    // We consider someone a "Leader" if they have referred at least 1 active person
+    let query = { directActiveRefCount: { $gt: 0 } };
+    if (roleFilter === 'USER' || roleFilter === 'SUBADMIN') {
+      query.role = roleFilter;
+    }
+
+    // --- NEW: Pagination Math ---
+    const totalLeaders = await User.countDocuments(query);
+    const totalPages = Math.ceil(totalLeaders / limit);
+    const skip = (page - 1) * limit;
+
+    // Fetch leaders safely
+    const leaders = await User.find(query)
+      .select('firstName lastName phone profilePic role createdAt currentPlan')
+      .populate('currentPlan', 'name')
+      .sort({ directActiveRefCount: -1 }) // Sort by largest network first
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const results = [];
+    for (const leader of leaders) {
+      // Get Total Commission Revenue Earned by this leader
+      const comms = await Commission.aggregate([
+        { $match: { earner: leader._id, status: 'RELEASED' } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const totalRev = comms.length ? comms[0].total : 0;
+
+      // Get Team Size using your existing BFS helper
+      const maxLevels = leader.role === 'SUBADMIN' ? 50 : 9;
+      const levels = await getDownlineLevels(leader._id, maxLevels);
+      let totalMembers = 0;
+      levels.forEach(l => totalMembers += l.length);
+
+      results.push({
+        id: leader._id,
+        firstName: leader.firstName || 'Unknown',
+        lastName: leader.lastName || '',
+        role: leader.role,
+        phone: leader.phone,
+        profilePic: leader.profilePic || null,
+        currentPlan: leader.currentPlan ? leader.currentPlan.name : 'No Plan',
+        joinedAt: new Date(leader.createdAt).toLocaleDateString(),
+        totalTeamMembers: totalMembers,
+        activeLevels: levels.length,
+        totalRevenueGenerated: totalRev
+      });
+    }
+
+    return res.json({
+      success: true,
+      leaders: results,
+      pagination: { currentPage: page, totalPages, totalLeaders }
+    });
+  } catch (error) {
+    console.error('getAdminNetworkLeaders error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// 2. Get a Specific Leader's Downline Level (Admin View)
+const getAdminTeamLevel = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findById(userId).select('role').lean();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const isSubadmin = user.role === 'SUBADMIN';
+    const maxLevels = isSubadmin ? 50 : 9;
+
+    let targetLevel = parseInt(req.query.level, 10) || 1;
+    if (targetLevel < 1) targetLevel = 1;
+    if (targetLevel > maxLevels) targetLevel = maxLevels;
+
+    let currentLevelIds = [new mongoose.Types.ObjectId(userId)];
+    let currentLevel = 0;
+    let levelUsers = [];
+
+    // Traverse down the tree to the requested level
+    while (currentLevel < targetLevel) {
+      const children = await User.find({ referredBy: { $in: currentLevelIds } })
+        .select('_id firstName lastName phone profilePic createdAt currentPlan role')
+        .populate('currentPlan', 'name price')
+        .lean();
+
+      currentLevel += 1;
+      if (currentLevel === targetLevel) {
+        levelUsers = children;
+        break;
+      }
+      if (!children.length) break;
+      currentLevelIds = children.map((c) => c._id);
+    }
+
+    if (!levelUsers.length) return res.json({ success: true, level: targetLevel, members: [] });
+
+    // Calculate revenue this specific leader made FROM these downline members
+    const levelUserIds = levelUsers.map((u) => u._id);
+    const revenueAgg = await Commission.aggregate([
+      { $match: { earner: new mongoose.Types.ObjectId(userId), fromUser: { $in: levelUserIds }, status: 'RELEASED' } },
+      { $group: { _id: '$fromUser', total: { $sum: '$amount' } } }
+    ]);
+
+    const revenueMap = new Map();
+    for (const r of revenueAgg) revenueMap.set(r._id.toString(), r.total);
+
+    const members = levelUsers.map((u) => ({
+      id: u._id,
+      name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      phone: u.phone,
+      profilePic: u.profilePic || null,
+      joinedAt: new Date(u.createdAt).toLocaleDateString(),
+      currentPlan: u.currentPlan ? u.currentPlan.name : 'No Plan',
+      revenueContributed: Number(revenueMap.get(u._id.toString()) || 0)
+    }));
+
+    return res.json({ success: true, level: targetLevel, members });
+  } catch (err) {
+    console.error('getAdminTeamLevel error', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 module.exports = {
   getTeamOverview,
-  getTeamLevel
+  getTeamLevel,
+  getAdminNetworkLeaders,
+  getAdminTeamLevel
 };

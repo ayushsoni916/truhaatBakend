@@ -74,7 +74,7 @@ const getPlans = async (req, res) => {
             isActive: true,
             planType
         })
-            .sort({ sortOrder: 1, price: 1 })
+            .sort({ price: 1 })
             .lean();
 
         return res.status(200).json({
@@ -96,12 +96,67 @@ const getSubAdminPlans = async (req, res) => {
             isActive: true,
             planType: 'SUBADMIN'
         })
-            .sort({ sortOrder: 1, price: 1 })
+            .sort({ price: 1 })
             .lean();
 
         return res.status(200).json({ success: true, plans });
     } catch (err) {
         console.error('getSubAdminPlans error', err);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+const getAllAdminPlans = async (req, res) => {
+    try {
+        // Find ALL plans (no filter for planType or isActive) so Admin can manage everything
+        const plans = await Plan.find({})
+            .sort({ planType: 1, price: 1 })
+            .lean();
+
+        // Notice we send it inside a 'data' array to match your React frontend expectation
+        return res.status(200).json({ success: true, data: plans });
+    } catch (err) {
+        console.error('getAllAdminPlans error', err);
+        return res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
+// DELETE PLAN (For use in Postman)
+const deletePlan = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const deletedPlan = await Plan.findByIdAndDelete(id);
+
+        if (!deletedPlan) return res.status(404).json({ error: 'Plan not found' });
+
+        return res.status(200).json({ success: true, message: 'Plan deleted successfully' });
+    } catch (error) {
+        console.error('deletePlan error', error);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+// UPDATE PLAN BENEFITS ONLY
+const updatePlanBenefits = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { benefits } = req.body;
+
+        if (!Array.isArray(benefits)) {
+            return res.status(400).json({ error: 'Benefits must be an array of strings' });
+        }
+
+        const updatedPlan = await Plan.findByIdAndUpdate(
+            id,
+            { benefits },
+            { new: true } // Returns the updated document
+        );
+
+        if (!updatedPlan) return res.status(404).json({ error: 'Plan not found' });
+
+        return res.status(200).json({ success: true, plan: updatedPlan });
+    } catch (error) {
+        console.error('updatePlanBenefits error', error);
         return res.status(500).json({ error: 'Internal server error' });
     }
 };
@@ -253,5 +308,8 @@ module.exports = {
     purchasePlan,
     processPlanActivation,
     processCashbackCardActivation,
-    getSubAdminPlans
+    getSubAdminPlans,
+    getAllAdminPlans,
+    updatePlanBenefits,
+    deletePlan
 };

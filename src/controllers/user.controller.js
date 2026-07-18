@@ -150,4 +150,54 @@ const getMe = async (req, res, next) => {
     }
 }
 
-module.exports = { createUser, updateProfileUnified, getKycData, getMe };
+// --- ADD THIS TO YOUR USER CONTROLLER ---
+const getUsersAdmin = async (req, res, next) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const type = req.query.type || 'all'; // Filters: 'all', 'mlm', 'subadmin'
+
+        // Build the query based on the filter
+        let query = {};
+        if (type === 'mlm') {
+            query.role = 'USER';
+            query.currentPlan = { $ne: null }; // MLM users are those who have bought a plan
+        } else if (type === 'subadmin') {
+            query.role = 'SUBADMIN';
+        }
+
+        const skip = (page - 1) * limit;
+
+        // Get total counts for pagination
+        const totalUsers = await User.countDocuments(query);
+        const totalPages = Math.ceil(totalUsers / limit);
+
+        // Fetch paginated users (excluding sensitive document numbers for safety)
+        const users = await User.find(query)
+            .select('firstName lastName profilePic phone email role referralCode directActiveRefCount isAadhaarVerified isPanVerified currentPlan createdAt')
+            .populate('currentPlan', 'name planType') // Get plan name instead of just ID
+            .sort({ createdAt: -1 }) // Newest first
+            .skip(skip)
+            .limit(limit)
+            .lean();
+
+        res.status(200).json({
+            success: true,
+            data: users,
+            pagination: {
+                currentPage: page,
+                totalPages,
+                totalUsers,
+                limit
+            }
+        });
+    } catch (error) {
+        console.error('getUsersAdmin error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
+// Don't forget to export it!
+// module.exports = { createUser, updateProfileUnified, getKycData, getMe, getUsersAdmin };
+
+module.exports = { createUser, updateProfileUnified, getKycData, getMe, getUsersAdmin };
