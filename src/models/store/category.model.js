@@ -8,8 +8,8 @@ const categorySchema = new mongoose.Schema({
         unique: true
     },
     image: {
-        type: String, // URL for the category icon (e.g., the garment icon in your UI)
-        default: ''
+        url: { type: String, required: true },
+        publicId: { type: String, required: true }
     },
     isActive: {
         type: Boolean,
@@ -17,7 +17,6 @@ const categorySchema = new mongoose.Schema({
     }
 }, {
     timestamps: true,
-    versionKey: false
 });
 
 module.exports = mongoose.model('Category', categorySchema);
