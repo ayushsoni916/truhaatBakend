@@ -1,37 +1,37 @@
 const mongoose = require('mongoose');
 
 const shopSchema = new mongoose.Schema({
-    // Changed: Store Owner Details directly instead of User ID
-    owner: {
-        name: { type: String, required: true, trim: true },
-        mobile: { type: String, required: true },
-        email: { type: String, trim: true }
-    },
-
+    // --- 1. Firm / Company Details ---
     name: {
         type: String,
         required: true,
         trim: true
     },
-    // This is the public shop phone number (might be different from owner's mobile)
-    phone: {
-        type: String,
+    // CHANGED: Now references your ShopCategory model dynamically
+    firmCategory: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'ShopCategory',
         required: true
+    },
+    phone: {
+        type: String
     },
 
-    // Categorization
-    mainCategory: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'MainShopCategory',
-        required: true
+    // --- 2. Authorized Person Details ---
+    owner: {
+        name: { type: String, required: true, trim: true },
+        designation: { type: String, required: true, trim: true },
+        mobile: { type: String, required: true },
+        email: { type: String, required: true, trim: true }
     },
-    // Location & Address
+
+    // --- 3. Address & Location ---
     address: {
-        street: String,
-        area: String,
-        city: String,
-        state: String,
-        pincode: String
+        street: { type: String, required: true },
+        area: { type: String, required: true },
+        city: { type: String, required: true },
+        state: { type: String, required: true },
+        pincode: { type: String, required: true }
     },
     location: {
         type: {
@@ -44,18 +44,45 @@ const shopSchema = new mongoose.Schema({
         }
     },
 
-    // Visuals
+    // --- 4. Bank Details ---
+    bankDetails: {
+        beneficiaryName: { type: String, required: true },
+        accountNumber: { type: String, required: true },
+        ifscCode: { type: String, required: true },
+        bankName: { type: String, required: true },
+        bankAddress: { type: String }
+    },
+
+    // --- 5. Tax & Compliance ---
+    taxDetails: {
+        panNumber: { type: String, required: true, uppercase: true, trim: true },
+        hasGst: { type: Boolean, required: true, default: false },
+        gstNumber: { type: String, uppercase: true, trim: true },
+        altDocType: { type: String },
+        altDocNumber: { type: String, trim: true }
+    },
+
+    // --- 6. Document Uploads (Images/PDFs) ---
+    documents: {
+        panCard: { url: { type: String, required: true }, publicId: { type: String, required: true } },
+        cancelledCheque: { url: { type: String, required: true }, publicId: { type: String, required: true } },
+        complianceCertificate: { url: { type: String, required: true }, publicId: { type: String, required: true } }
+    },
+
+    // --- 7. Visuals ---
     images: [{
         url: { type: String, required: true },
         publicId: { type: String, required: true }
     }],
 
+    // --- 8. Marketplace Data ---
     description: { type: String },
     rating: { type: Number, default: 0 },
     isOpen: { type: Boolean, default: true }
 
 }, { timestamps: true });
 
+// Index for Geospatial queries
 shopSchema.index({ location: '2dsphere' });
 
 module.exports = mongoose.model('Shop', shopSchema);

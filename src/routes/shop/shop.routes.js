@@ -1,14 +1,20 @@
 const express = require('express');
 const multer = require('multer');
-const { createShop, getTopShops } = require('../../controllers/shop/shop.controller');
+const { createShop, getTopShops, getAllShops } = require('../../controllers/shop/shop.controller');
 const { requireAuth } = require('../../middleware/auth.middleware');
 const shopRouter = express.Router();
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-shopRouter.post('/create', upload.array('images', 3), createShop);
+shopRouter.post('/add', upload.fields([
+    { name: 'panCard', maxCount: 1 },
+    { name: 'cancelledCheque', maxCount: 1 },
+    { name: 'complianceCertificate', maxCount: 1 },
+    { name: 'images', maxCount: 3 }
+]), createShop);
 shopRouter.get('/top-shops', getTopShops);
+shopRouter.get('/all', getAllShops);
 
 
 // shopRouter.get('/fix-index', fixIndexes);
