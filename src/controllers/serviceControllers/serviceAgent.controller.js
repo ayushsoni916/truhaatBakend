@@ -1,9 +1,25 @@
 
 const axios = require('axios');
+const cloudinary = require("cloudinary").v2;
 const ServiceCategory = require('../../models/ServiceModel/serviceCategory.model');
 const ServiceAgent = require('../../models/ServiceModel/serviceAgent.model');
 const { createOtpForPhone, verifyOtpForPhone } = require('../../services/otp.service');
 const { generateAccessToken } = require('../../services/jwt.service');
+
+// Helper: Cloudinary Multi-Upload
+const uploadToCloudinary = (fileBuffer, folder) => {
+    return new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+            { folder: folder },
+            (error, result) => {
+                if (error) reject(error);
+                else resolve({ url: result.secure_url, publicId: result.public_id });
+            }
+        );
+        uploadStream.end(fileBuffer);
+    });
+};
+
 
 // SMS Gateway Helper Integration (Reusing your SMS India Hub utility)
 const sendSmsIndiaHub = async (phone, code) => {
@@ -43,37 +59,91 @@ const sendSmsIndiaHub = async (phone, code) => {
 
 const onboardAgentByAdmin = async (req, res) => {
     try {
-        const { phone, firstName, lastName, allowedCategoryId, email } = req.body;
+        const {
+            // Basic Details
+            firstName, lastName, phone, email, allowedCategoryId, description,
+            // Address Details
+            street, area, city, state, pincode,
+            // Bank Details
+            beneficiaryName, accountNumber, ifscCode, bankName, bankAddress,
+            // Tax & Compliance
+            panNumber, hasGst, gstNumber, altDocType, altDocNumber
+        } = req.body;
 
+        const files = req.files;
+
+        // 1. Validate mandatory basic fields
         if (!phone || !firstName || !allowedCategoryId) {
             return res.status(400).json({ success: false, error: 'phone, firstName, and allowedCategoryId are required' });
         }
 
-        // 1. Validate category mapping exists
+        // 2. Validate mandatory files
+        if (!files || !files.profilePic || !files.panCard || !files.cancelledCheque || !files.identityDocument) {
+            return res.status(400).json({ success: false, error: "All mandatory documents (Profile Pic, PAN, Cheque, ID) are required." });
+        }
+
+        // 3. Validate category mapping exists
         const categoryExists = await ServiceCategory.findById(allowedCategoryId);
         if (!categoryExists) {
             return res.status(404).json({ success: false, error: 'Assigned Service Category not found' });
         }
 
-        // 2. Check duplicate phone records
+        // 4. Check duplicate phone records
         const existingAgent = await ServiceAgent.findOne({ phone: phone.trim() });
         if (existingAgent) {
             return res.status(400).json({ success: false, error: 'An agent with this phone number is already registered' });
         }
 
-        // 3. Create profile
+        // 5. Upload Documents to Cloudinary in parallel
+        const [profileUpload, panUpload, chequeUpload, idUpload] = await Promise.all([
+            uploadToCloudinary(files.profilePic[0].buffer, "agent_profiles"),
+            uploadToCloudinary(files.panCard[0].buffer, "agent_documents"),
+            uploadToCloudinary(files.cancelledCheque[0].buffer, "agent_documents"),
+            uploadToCloudinary(files.identityDocument[0].buffer, "agent_documents")
+        ]);
+
+        // 6. Create Profile with all nested fields
         const agent = await ServiceAgent.create({
+            // Basic Details
             phone: phone.trim(),
             firstName: firstName.trim(),
             lastName: lastName ? lastName.trim() : '',
+            email: email ? email.trim() : undefined,
+            profilePic: profileUpload.url, // Stored at root level
             allowedCategory: allowedCategoryId,
-            email: email ? email.trim() : undefined
+            description: description ? description.trim() : '',
+
+            // Address Details
+            address: { street, area, city, state, pincode },
+
+            // Bank Details
+            bankDetails: { beneficiaryName, accountNumber, ifscCode, bankName, bankAddress },
+
+            // Tax & Compliance Details
+            taxDetails: {
+                panNumber: panNumber ? panNumber.toUpperCase() : undefined,
+                hasGst: hasGst === 'true' || hasGst === true,
+                gstNumber: gstNumber ? gstNumber.toUpperCase() : undefined,
+                altDocType: altDocType || undefined,
+                altDocNumber: altDocNumber ? altDocNumber.trim() : undefined
+            },
+
+            // Physical Documents (URL & Public ID)
+            documents: {
+                panCard: panUpload,
+                cancelledCheque: chequeUpload,
+                identityDocument: idUpload
+            }
         });
 
-        return res.status(201).json({ success: true, data: agent });
+        return res.status(201).json({
+            success: true,
+            message: "Service Agent onboarded successfully",
+            data: agent
+        });
     } catch (error) {
         console.error('onboardAgentByAdmin Error:', error);
-        return res.status(500).json({ success: false, error: 'Internal server error' });
+        return res.status(500).json({ success: false, error: 'Internal server error during onboarding' });
     }
 };
 
@@ -298,9 +368,58 @@ const toggleAgentOnlineStatus = async (req, res) => {
     }
 };
 
+// ==========================================
+// ADMIN: FETCH ALL AGENTS (PAGINATION & SEARCH)
+// ==========================================
+const getAllAgentsByAdmin = async (req, res) => {
+    try {
+        const { categoryId, search, page = 1, limit = 10 } = req.query;
+        let query = {}; // Admin needs to see all agents, regardless of isActive status
+
+        // 1. Filter by Service Category
+        if (categoryId) {
+            query.allowedCategory = categoryId;
+        }
+
+        // 2. Search by First Name, Last Name, or Phone Number
+        if (search) {
+            query.$or = [
+                { firstName: { $regex: search, $options: 'i' } },
+                { lastName: { $regex: search, $options: 'i' } },
+                { phone: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+
+        // 3. Fetch data with populated category
+        const agents = await ServiceAgent.find(query)
+            .populate('allowedCategory', 'name')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(parseInt(limit));
+
+        const total = await ServiceAgent.countDocuments(query);
+
+        return res.status(200).json({
+            success: true,
+            data: agents,
+            pagination: {
+                total,
+                page: parseInt(page),
+                pages: Math.ceil(total / parseInt(limit))
+            }
+        });
+    } catch (error) {
+        console.error('getAllAgentsByAdmin Error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error while fetching agents.' });
+    }
+};
+
 
 module.exports = {
     onboardAgentByAdmin,
+    getAllAgentsByAdmin,
     sendAgentOtp,
     verifyAgentOtp,
     updateAgentLocation,
