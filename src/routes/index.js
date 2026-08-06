@@ -21,6 +21,7 @@ const paymentRouter = require('./payment.routes.js');
 const serviceRouter = require('./services/serviceCategory.routes.js')
 const serviceAgentrouter = require('./services/serviceAgent.routes.js')
 const cashBackRouter = require('./cashback.routes.js')
+const shopAuthRouter = require('./shop/shopAuth.routes.js')
 const router = express.Router()
 
 router.use('/users', userRouter)
@@ -35,6 +36,7 @@ router.use('/category', categoryRouter);
 router.use('/product', productRouter);
 router.use('/store', cartRouter);
 router.use('/shop', shopRouter);
+router.use('/shop-auth', shopAuthRouter);
 router.use('/admin-setup', adminSetupRouter);
 router.use('/main-category', mainCategoryRouter);
 router.use('/shopProduct', shopProductRouter);
