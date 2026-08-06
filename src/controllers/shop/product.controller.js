@@ -548,3 +548,46 @@ exports.getProductDetailOffline = async (req, res, next) => {
         next(error);
     }
 };
+
+// --- Get Products of a Specific Shop (For Admin Panel) ---
+exports.getAdminShopProducts = async (req, res, next) => {
+    try {
+        const { shopId } = req.params;
+        const { search, subCategory } = req.query;
+
+        let query = { shop: shopId };
+
+        if (search) {
+            query.name = { $regex: search, $options: 'i' };
+        }
+
+        if (subCategory) {
+            query.subCategory = subCategory;
+        }
+
+        const products = await productModel.find(query)
+            .populate('category', 'name')
+            .populate('subCategory', 'name')
+            .populate('tag', 'name')
+            .populate('shop', 'name phone owner')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const formattedProducts = products.map(product => ({
+            ...product,
+            displayImage: product.mainImage?.url || product.images?.[0]?.url || null,
+            calculatedStock: product.hasVariants && product.variants?.length > 0
+                ? product.variants.reduce((acc, v) => acc + (v.stock || 0), 0)
+                : (product.totalStock || 0)
+        }));
+
+        res.status(200).json({
+            success: true,
+            count: formattedProducts.length,
+            data: formattedProducts
+        });
+    } catch (error) {
+        console.error("getAdminShopProducts error:", error);
+        next(error);
+    }
+};

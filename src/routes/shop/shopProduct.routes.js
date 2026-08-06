@@ -26,7 +26,8 @@ const {
     getProductsBySubCategory,
     searchProducts,
     getProductsByFilter,
-    getProductDetailOffline
+    getProductDetailOffline,
+    getAdminShopProducts
 } = require('../../controllers/shop/product.controller');
 
 // Import the shop authentication middleware
@@ -42,6 +43,8 @@ const upload = multer({ storage: multer.memoryStorage() });
 // ==========================================
 // Changed to max 5 images to keep payloads optimized and safe
 shopProductRouter.post('/add', requireShopAuth, upload.array('images', 5), addProduct);
+
+shopProductRouter.get('/admin/shop/:shopId', getAdminShopProducts); // <-- 3. Add Admin Route
 
 
 // ==========================================
