@@ -283,19 +283,18 @@ const shopModel = require("../../models/Shop/shop.model");
 // Adjust path if needed
 const cloudinary = require("cloudinary").v2;
 
-// --- 1. Add Product (Updated for Robust Model) ---
+// --- 1. Add Product (Updated for Variant-Specific Specifications) ---
 exports.addProduct = async (req, res, next) => {
     try {
-        // 1. Get Shop Identity and Fixed Category from the requireShopAuth middleware
         const shopId = req.user._id;
         const fixedCategoryId = req.user.doc.firmCategory;
 
         if (!fixedCategoryId) {
-            return res.status(400).json({ success: false, error: "Your shop profile is missing a firm category. Please contact support." });
+            return res.status(400).json({ success: false, error: "Your shop profile is missing a firm category." });
         }
 
-        // 2. Handle Cloudinary Image Uploads
-        const files = req.files; // Array from multer
+        // Handle Images
+        const files = req.files;
         if (!files || files.length === 0) {
             return res.status(400).json({ success: false, error: "At least one product image is required" });
         }
@@ -311,50 +310,51 @@ exports.addProduct = async (req, res, next) => {
         });
         const uploadedImages = await Promise.all(uploadPromises);
 
-        // First image is the main thumbnail, the rest go to the gallery array
         const mainImage = uploadedImages[0];
         const additionalImages = uploadedImages.slice(1);
 
-        // 3. Parse JSON arrays from FormData
-        const specifications = req.body.specifications ? JSON.parse(req.body.specifications) : [];
-        const variants = req.body.variants ? JSON.parse(req.body.variants) : [];
+        // Parse JSON arrays
+        const hasVariants = req.body.hasVariants === 'true';
+        let specifications = req.body.specifications ? JSON.parse(req.body.specifications) : [];
+        let variants = req.body.variants ? JSON.parse(req.body.variants) : [];
         const searchKeywords = req.body.searchKeywords ? JSON.parse(req.body.searchKeywords) : [];
 
         if (searchKeywords.length > 5) {
             return res.status(400).json({ success: false, error: "You can only add up to 5 search keywords." });
         }
 
-        // 4. Create the Product
+        // BACKEND SAFEGUARD: Mutually exclusive specifications and stock
+        if (hasVariants) {
+            specifications = []; // Clear global specs if variants are used
+        } else {
+            variants = []; // Clear variants if turned off
+        }
+
+        // Create the Product
         const product = await productModel.create({
-            // Core
             shop: shopId,
             name: req.body.name,
             description: req.body.description,
-
-            // Taxonomy (Category is auto-injected)
             category: fixedCategoryId,
             subCategory: req.body.subCategory,
-            tag: req.body.tag, // Singular ShopTag reference (Men, Women, Kids, etc.)
+            tag: req.body.tag,
             searchKeywords: searchKeywords,
 
-            // Pricing & Tax
             basePrice: Number(req.body.basePrice),
             salePrice: req.body.salePrice ? Number(req.body.salePrice) : undefined,
             gstPercentage: Number(req.body.gstPercentage),
             hsnCode: req.body.hsnCode,
 
-            // Media
             mainImage: mainImage,
             images: additionalImages,
 
-            // Dynamic Data & Inventory
-            specifications: specifications,
-            hasVariants: req.body.hasVariants === 'true',
-            totalStock: Number(req.body.totalStock) || 0,
-            variants: variants,
+            // DYNAMIC DATA (Automatically parses nested specs inside variants)
+            hasVariants: hasVariants,
+            totalStock: hasVariants ? 0 : (Number(req.body.totalStock) || 0),
+            specifications: specifications, // Global specs
+            variants: variants, // Variant array (now contains size, color, stock, sku, and specifications[])
 
-            // Status
-            inStock: req.body.inStock !== 'false', // Defaults to true unless explicitly false
+            inStock: req.body.inStock !== 'false',
             isActive: req.body.isActive !== 'false'
         });
 
@@ -588,6 +588,31 @@ exports.getAdminShopProducts = async (req, res, next) => {
         });
     } catch (error) {
         console.error("getAdminShopProducts error:", error);
+        next(error);
+    }
+};
+
+// --- 9. Admin Disable/Enable Products (Bulk) ---
+exports.toggleAdminDisableProducts = async (req, res, next) => {
+    try {
+        const { productIds, disable } = req.body; // disable should be a boolean (true/false)
+
+        if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
+            return res.status(400).json({ success: false, error: "Please provide an array of product IDs." });
+        }
+
+        // Update all provided product IDs at once
+        await productModel.updateMany(
+            { _id: { $in: productIds } },
+            { $set: { adminDisabled: Boolean(disable) } }
+        );
+
+        res.status(200).json({
+            success: true,
+            message: `Successfully ${disable ? 'disabled' : 'enabled'} ${productIds.length} product(s).`
+        });
+    } catch (error) {
+        console.error("Toggle Admin Disable Error:", error);
         next(error);
     }
 };

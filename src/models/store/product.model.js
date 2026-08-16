@@ -28,7 +28,7 @@ const productSchema = new mongoose.Schema({
         publicId: { type: String, required: true }
     }],
 
-    // Dynamic Data
+    // Global Specifications (If no variants, or specs shared by all variants)
     specifications: [{
         key: { type: String, required: true, trim: true },
         value: { type: String, required: true, trim: true }
@@ -41,7 +41,13 @@ const productSchema = new mongoose.Schema({
         size: { type: String, required: true, trim: true },
         color: { type: String, trim: true },
         stock: { type: Number, required: true, min: 0 },
-        sku: { type: String, trim: true }
+        sku: { type: String, trim: true },
+        
+        // NEW: Variant-Specific Specifications (e.g., Weight changes based on size)
+        specifications: [{
+            key: { type: String, required: true, trim: true },
+            value: { type: String, required: true, trim: true }
+        }]
     }],
 
     // Status

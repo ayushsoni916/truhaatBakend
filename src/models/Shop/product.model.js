@@ -69,7 +69,7 @@ const shopProductSchema = new mongoose.Schema({
         publicId: { type: String, required: true }
     }],
 
-    // --- 6. Dynamic Data (e.g., Material: Cotton, Fit: Slim) ---
+    // --- 6. Global Specifications ---
     specifications: [{
         key: { type: String, required: true, trim: true },
         value: { type: String, required: true, trim: true }
@@ -82,13 +82,19 @@ const shopProductSchema = new mongoose.Schema({
         size: { type: String, required: true, trim: true }, // e.g., "XL", "10", "1kg"
         color: { type: String, trim: true }, // e.g., "Red", "Blue"
         stock: { type: Number, required: true, min: 0 },
-        sku: { type: String, trim: true } // Shopkeeper's internal barcode/ID
+        sku: { type: String, trim: true }, // Shopkeeper's internal barcode/ID
+
+        // NEW: Variant-Specific Specifications
+        specifications: [{
+            key: { type: String, required: true, trim: true },
+            value: { type: String, required: true, trim: true }
+        }]
     }],
 
     // --- 8. Status ---
     inStock: { type: Boolean, default: true },
-    isActive: { type: Boolean, default: true }
-
+    isActive: { type: Boolean, default: true },
+    adminDisabled: { type: Boolean, default: false }
 }, { timestamps: true });
 
 // Create a powerful text index for the search bar

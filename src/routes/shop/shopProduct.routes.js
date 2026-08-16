@@ -27,7 +27,8 @@ const {
     searchProducts,
     getProductsByFilter,
     getProductDetailOffline,
-    getAdminShopProducts
+    getAdminShopProducts,
+    toggleAdminDisableProducts
 } = require('../../controllers/shop/product.controller');
 
 // Import the shop authentication middleware
@@ -46,7 +47,7 @@ shopProductRouter.post('/add', requireShopAuth, upload.array('images', 5), addPr
 
 shopProductRouter.get('/admin/shop/:shopId', getAdminShopProducts); // <-- 3. Add Admin Route
 
-
+shopProductRouter.put('/admin/toggle-status', toggleAdminDisableProducts);
 // ==========================================
 // PUBLIC ROUTES (For Consumer App & Browsing)
 // ==========================================
