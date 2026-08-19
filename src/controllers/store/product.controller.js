@@ -1,3 +1,4 @@
+const categoryModel = require("../../models/store/category.model");
 const productModel = require("../../models/store/product.model");
 const cloudinary = require("cloudinary").v2;
 
@@ -61,10 +62,11 @@ exports.addProduct = async (req, res, next) => {
 // 2. Get All Products (Admin)
 exports.getProducts = async (req, res, next) => {
     try {
-        const { categoryId, search, page = 1, limit = 10 } = req.query;
+        const { categoryId,subCategoryId ,search, page = 1, limit = 10 } = req.query;
         let query = {}; 
 
         if (categoryId) query.category = categoryId;
+        if (subCategoryId) query.subCategory = subCategoryId;
         if (search) query.name = { $regex: search, $options: 'i' };
 
         const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -205,6 +207,55 @@ exports.updateProduct = async (req, res, next) => {
 
         await product.save();
         res.status(200).json({ success: true, message: "Product updated successfully", data: product });
+    } catch (error) {
+        next(error);
+    }
+};
+
+exports.getHomeFeed = async (req, res, next) => {
+    try {
+        // 1. Fetch all active categories (For the top tabs)
+        const categories = await categoryModel.find({ isActive: true }).lean();
+
+        // 2. Fetch the top 5 products for EACH category efficiently in parallel
+        const categorySections = await Promise.all(
+            categories.map(async (cat) => {
+                // We only .select() the fields the UI actually needs, saving massive bandwidth
+                const products = await productModel.find({ category: cat._id, isActive: true })
+                    .select('name basePrice salePrice mainImage category')
+                    .limit(5)
+                    .lean();
+
+                return {
+                    categoryId: cat._id,
+                    categoryName: cat.name,
+                    // Calculate discount percentage on the backend
+                    products: products.map(p => ({
+                        _id: p._id,
+                        name: p.name,
+                        price: p.basePrice,
+                        salePrice: p.salePrice,
+                        mainImage: p.mainImage?.url,
+                        category: p.category,
+                        discountPercentage: p.basePrice > 0 && p.salePrice 
+                            ? Math.round(((p.basePrice - p.salePrice) / p.basePrice) * 100) 
+                            : 0
+                    }))
+                };
+            })
+        );
+
+        // 3. Filter out any categories that don't have any products yet
+        const activeSections = categorySections.filter(sec => sec.products.length > 0);
+
+        // 4. Send everything in one payload
+        res.status(200).json({
+            success: true,
+            data: {
+                categories: categories,
+                sections: activeSections
+            }
+        });
     } catch (error) {
         next(error);
     }

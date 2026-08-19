@@ -466,7 +466,7 @@ exports.getTopDeals = async (req, res, next) => {
         const nearbyIds = nearbyShops.map(s => s._id);
 
         const fetchDeals = async (matchQuery, limit) => {
-            return await Product.aggregate([
+            return await productModel.aggregate([
                 { $match: { ...matchQuery, isActive: true, inStock: true, salePrice: { $exists: true } } },
                 {
                     $addFields: {

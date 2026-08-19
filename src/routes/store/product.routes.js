@@ -1,11 +1,13 @@
 const express = require('express');
 const multer = require('multer');
-const { addProduct, getProducts, getProductById, deleteProduct, updateProduct } = require('../../controllers/store/product.controller');
+const { addProduct, getProducts, getProductById, deleteProduct, updateProduct, getHomeFeed } = require('../../controllers/store/product.controller');
 const { getProductDetailOffline } = require('../../controllers/shop/product.controller');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
 const productRouter = express.Router();
+
+productRouter.get('/home-feed', getHomeFeed);
 
 productRouter.post('/add', upload.array('images', 5), addProduct);       // POST /api/product/add
 productRouter.get('/all', getProducts);        // GET  /api/product/all?categoryId=...
