@@ -2,6 +2,7 @@ const cartModel = require('../../models/store/cart.model');
 const addressModel = require('../../models/store/address.model');
 const couponModel = require('../../models/store/coupon.model');
 const Order = require('../../models/store/order.model');
+const productModel = require('../../models/store/product.model');
 
 // Helper: Calculate Cart Totals
 const calculateCartTotals = async (cartItems, couponCode) => {
@@ -10,26 +11,39 @@ const calculateCartTotals = async (cartItems, couponCode) => {
 
     // 1. Calculate Subtotal from Live Product Data
     for (const item of cartItems) {
-        // item.product is already populated
         const product = item.product;
 
         // Safety check: if product was deleted from DB
         if (!product) continue;
 
-        const price = product.salePrice || product.price;
+        // NEW: Use basePrice and salePrice from the new schema
+        const price = product.salePrice || product.basePrice;
         const itemTotal = price * item.quantity;
 
         subtotal += itemTotal;
 
+        // NEW: Determine max available stock for this specific cart item
+        let maxStock = 0;
+        if (product.hasVariants && product.variants && product.variants.length > 0) {
+            const variant = product.variants.find(v => String(v.size) === String(item.size));
+            maxStock = variant ? variant.stock : 0;
+        } else {
+            maxStock = product.totalStock || 0;
+        }
+
         itemsFormatted.push({
             product: product._id,
             name: product.name,
-            image: product.mainImage,
+            // NEW: Handle the object image schema
+            image: product.mainImage?.url || product.mainImage,
             price: price,
-            originalPrice: product.price, // To show strikethrough price
+            originalPrice: product.basePrice,
             quantity: item.quantity,
             size: item.size,
-            itemTotal: itemTotal
+            maxStock: maxStock, // Send maxStock to frontend for validation
+            itemTotal: itemTotal,
+            hasVariants: product.hasVariants,
+            variants: product.variants || []
         });
     }
 
@@ -42,7 +56,6 @@ const calculateCartTotals = async (cartItems, couponCode) => {
 
         // Validate Coupon
         if (coupon && new Date() < coupon.expiresAt && subtotal >= coupon.minOrderValue) {
-
             if (coupon.discountType === 'PERCENTAGE') {
                 discount = (subtotal * coupon.value) / 100;
                 if (coupon.maxDiscountAmount) {
@@ -55,7 +68,7 @@ const calculateCartTotals = async (cartItems, couponCode) => {
         }
     }
 
-    const shipping = subtotal > 500 ? 0 : 40; // Example: Free shipping over 500
+    const shipping = subtotal > 500 ? 0 : 40;
     const finalAmount = subtotal - discount + shipping;
 
     return {
@@ -74,32 +87,48 @@ const calculateCartTotals = async (cartItems, couponCode) => {
 
 exports.addToCart = async (req, res, next) => {
     try {
-        // console.log("req",req)
         const { productId, quantity, size } = req.body;
-        console.log("productId", productId, "quantity", quantity, "size", size)
         const userId = req.user.id;
+
+        // --- NEW: STOCK VALIDATION ---
+        const product = await productModel.findById(productId);
+        if (!product) return res.status(404).json({ error: "Product not found" });
+
+        // Determine available stock
+        let availableStock = 0;
+        if (product.hasVariants && product.variants && product.variants.length > 0) {
+            const targetVariant = product.variants.find(v => String(v.size) === String(size));
+            if (!targetVariant) return res.status(400).json({ error: "Selected variant is unavailable." });
+            availableStock = targetVariant.stock;
+        } else {
+            availableStock = product.totalStock || 0;
+        }
+
+        if (availableStock < 1) {
+            return res.status(400).json({ error: "This item is currently out of stock." });
+        }
+        // -----------------------------
 
         let cart = await cartModel.findOne({ user: userId });
         if (!cart) {
             cart = new cartModel({ user: userId, items: [] });
         }
 
-        // Check if product+size exists
         const targetSize = size ? String(size) : null;
 
-        // Check if product+size exists
         const itemIndex = cart.items.findIndex(p => {
-            // Convert DB ObjectId to string
             const dbProduct = p.product.toString();
-            // Convert DB size to string (safe check)
             const dbSize = p.size ? String(p.size) : null;
-
             return dbProduct === productId && dbSize === targetSize;
         });
-        // --
 
-        console.log("itemIdx", itemIndex)
-        console.log("cart", cart)
+        // Check if new quantity exceeds stock
+        const currentCartQty = itemIndex > -1 ? cart.items[itemIndex].quantity : 0;
+        if (currentCartQty + quantity > availableStock) {
+            return res.status(400).json({
+                error: `Only ${availableStock} units available. You already have ${currentCartQty} in your cart.`
+            });
+        }
 
         if (itemIndex > -1) {
             cart.items[itemIndex].quantity += quantity;
@@ -108,11 +137,8 @@ exports.addToCart = async (req, res, next) => {
         }
 
         await cart.save();
-        // console.log("cart Updated")
-        // console.log("new cart",cart)
-        res.status(200).json({ success: true, message: 'Updated cart' });
+        res.status(200).json({ success: true, message: 'Added to cart' });
     } catch (error) {
-        console.log("error", error)
         next(error);
     }
 };
@@ -221,14 +247,11 @@ exports.removeCartItem = async (req, res, next) => {
 exports.updateCartItem = async (req, res, next) => {
     try {
         const userId = req.user.id;
-        const { productId, size, type } = req.body; // Using productId + size to identify
+        const { productId, size, type } = req.body;
 
-        // 1. Get Cart
         let cart = await cartModel.findOne({ user: userId });
         if (!cart) return res.status(404).json({ error: "Cart not found" });
 
-        // 2. Find the item index by ProductID AND Size
-        // We cast p.product to string to ensure matching works
         const itemIndex = cart.items.findIndex(p =>
             p.product.toString() === productId && p.size === size
         );
@@ -237,10 +260,23 @@ exports.updateCartItem = async (req, res, next) => {
             return res.status(404).json({ error: "Item not found in cart" });
         }
 
-        // 3. Update Quantity
+        // --- NEW: STOCK VALIDATION FOR INCREMENT ---
         if (type === 'increment') {
+            const product = await productModel.findById(productId);
+            let availableStock = product.totalStock || 0;
+
+            if (product.hasVariants && product.variants) {
+                const variant = product.variants.find(v => String(v.size) === String(size));
+                if (variant) availableStock = variant.stock;
+            }
+
+            if (cart.items[itemIndex].quantity + 1 > availableStock) {
+                return res.status(400).json({ error: `Maximum stock limit reached (${availableStock}).` });
+            }
+
             cart.items[itemIndex].quantity += 1;
-        } else if (type === 'decrement') {
+        }
+        else if (type === 'decrement') {
             if (cart.items[itemIndex].quantity > 1) {
                 cart.items[itemIndex].quantity -= 1;
             } else {
@@ -254,7 +290,6 @@ exports.updateCartItem = async (req, res, next) => {
         const updatedCart = await cartModel.findOne({ user: userId }).populate('items.product');
         const calculation = await calculateCartTotals(updatedCart.items, updatedCart.couponCode);
 
-        // --- FIX: Auto-remove if total dropped below min value ---
         if (updatedCart.couponCode && !calculation.couponDetails) {
             updatedCart.couponCode = null;
             await updatedCart.save();
@@ -384,6 +419,48 @@ exports.applyCoupon = async (req, res, next) => {
             code: coupon.code
         });
 
+    } catch (error) {
+        next(error);
+    }
+};
+// --- Get ALL Coupons for Admin Dashboard (Ignores Expiry) ---
+exports.getAllCouponsAdmin = async (req, res, next) => {
+    try {
+        const coupons = await couponModel.find().sort({ createdAt: -1 });
+        res.status(200).json({ success: true, data: coupons });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// --- Delete a Coupon ---
+exports.deleteCoupon = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const deletedCoupon = await couponModel.findByIdAndDelete(id);
+
+        if (!deletedCoupon) {
+            return res.status(404).json({ error: 'Coupon not found' });
+        }
+
+        res.status(200).json({ success: true, message: 'Coupon deleted successfully' });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// --- Toggle Coupon Active Status (Optional but useful) ---
+exports.toggleCouponStatus = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const coupon = await couponModel.findById(id);
+
+        if (!coupon) return res.status(404).json({ error: 'Coupon not found' });
+
+        coupon.isActive = !coupon.isActive;
+        await coupon.save();
+
+        res.status(200).json({ success: true, message: 'Coupon status updated', data: coupon });
     } catch (error) {
         next(error);
     }
@@ -574,6 +651,68 @@ exports.getDefaultAddress = async (req, res, next) => {
         // Returns the address object OR null if user has 0 addresses
         res.status(200).json({ success: true, data: address });
 
+    } catch (error) {
+        next(error);
+    }
+};
+
+// ==========================================
+// ADMIN ORDER CONTROLLERS
+// ==========================================
+
+// --- 1. Get All Orders (Admin) ---
+exports.getAllOrdersAdmin = async (req, res, next) => {
+    try {
+        // Fetch all orders, sort by newest, and populate the user details
+        const orders = await Order.find()
+            .populate('user', 'firstName lastName phone email')
+            .sort({ createdAt: -1 });
+
+        // Map through orders to add a fallback for taxAmount so the frontend doesn't break
+        const formattedOrders = orders.map(order => {
+            const orderObj = order.toObject();
+            // If taxAmount isn't in your DB yet, default it to 0
+            orderObj.taxAmount = orderObj.taxAmount || 0;
+            return orderObj;
+        });
+
+        res.status(200).json({
+            success: true,
+            count: formattedOrders.length,
+            data: formattedOrders
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// --- 2. Update Order Status (Admin) ---
+exports.updateOrderStatusAdmin = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { orderStatus } = req.body;
+
+        // Validate the status
+        const validStatuses = ['PLACED', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
+        if (!validStatuses.includes(orderStatus)) {
+            return res.status(400).json({ error: 'Invalid order status' });
+        }
+
+        const updatedOrder = await Order.findByIdAndUpdate(
+            id,
+            { orderStatus: orderStatus },
+            { new: true } // Return the updated document
+        ).populate('user', 'firstName lastName phone email');
+
+        if (!updatedOrder) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: `Order status updated to ${orderStatus}`,
+            data: updatedOrder
+        });
     } catch (error) {
         next(error);
     }

@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../../middleware/auth.middleware');
-const { placeOrder, getCart, addToCart, applyCoupon, getAddresses, addAddress, removeCartItem, getDefaultAddress, updateCartItem, createCoupon, getCoupons, getUserOrders, getOrderDetails } = require('../../controllers/store/store.controller');
+const { placeOrder, getCart, addToCart, applyCoupon, getAddresses, addAddress, removeCartItem, getDefaultAddress, updateCartItem, createCoupon, getCoupons, getUserOrders, getOrderDetails, getAllCouponsAdmin, deleteCoupon, toggleCouponStatus, getAllOrdersAdmin, updateOrderStatusAdmin } = require('../../controllers/store/store.controller');
 const cartRouter = express.Router();
 
 // Import Controller Functions
@@ -45,9 +45,14 @@ cartRouter.get('/address/default', requireAuth, getDefaultAddress);
 // Coupoun ROUTES
 // ==========================================
 
-cartRouter.post('/coupon/add', requireAuth, createCoupon); // Ideally protect with Admin middleware
+// cartRouter.post('/coupon/add', requireAuth, createCoupon); // Ideally protect with Admin middleware
 cartRouter.get('/coupon/all', getCoupons);                 // Public or User
 cartRouter.post('/cart/coupon/apply', requireAuth, applyCoupon);
+// admin
+cartRouter.post('/coupon/add', createCoupon);
+cartRouter.get('/admin/coupon/all', getAllCouponsAdmin);
+cartRouter.delete('/admin/coupon/:id', deleteCoupon);
+cartRouter.put('/admin/coupon/toggle/:id', toggleCouponStatus);
 
 
 // ==========================================
@@ -62,5 +67,11 @@ cartRouter.get('/order/my-orders', requireAuth, getUserOrders);
 
 // GET /api/store/order/:orderId - View specific order details
 cartRouter.get('/order/:orderId', requireAuth, getOrderDetails);
+
+// Get all orders across the platform
+cartRouter.get('/admin/order/all', getAllOrdersAdmin);
+
+// Update a specific order's status
+cartRouter.put('/admin/order/status/:id', updateOrderStatusAdmin);
 
 module.exports = cartRouter;
