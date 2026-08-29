@@ -6,6 +6,10 @@ const User = require('../models/user.model');
 const PlanPurchase = require('../models/planPurchase.model');
 const { processPlanActivation, processCashbackCardActivation } = require('./plan.controller');
 const { processServiceBooking } = require('./serviceControllers/serviceBooking.controller');
+const orderModel = require('../models/Shop/order.model');
+const offlineCartModel = require('../models/Shop/offlineCart.model');
+const cashbackWalletModel = require('../models/cashbackWallet.model');
+const cashbackTransactionModel = require('../models/cashbackTransaction.model'); // Adjust path if needed
 
 const razorpay = new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID,
@@ -104,111 +108,160 @@ exports.createCashBackOrder = async (req, res) => {
 };
 
 exports.handleWebhook = async (req, res) => {
-    console.log("📡 Razorpay Webhook Received:", req.body);
-    const signature = req.headers['x-razorpay-signature'];
-    // const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
-    const webhookSecret = 'myLocalSecret123'; // For local testing, replace with env variable in production
+    try {
+        console.log("📡 Razorpay Webhook Received.");
 
-    const expectedSignature = crypto
-        .createHmac('sha256', webhookSecret)
-        .update(req.body) // Use raw body here
-        .digest('hex');
+        const signature = req.headers['x-razorpay-signature'];
+        // const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+        const webhookSecret = 'myLocalSecret123'; // For local testing, replace in production
 
-    if (signature !== expectedSignature) {
-        console.error("❌ Webhook validation failed: Cryptographic signature mismatch.");
-        return res.status(400).send('Invalid signature verification payload.');
-    }
-    const parsedBody = JSON.parse(req.body);
-    const event = parsedBody.event;
+        // 1. Validate Signature (Requires req.body to be a raw buffer/string)
+        const expectedSignature = crypto
+            .createHmac('sha256', webhookSecret)
+            .update(req.body)
+            .digest('hex');
 
-    console.log(`📡 Razorpay Webhook Event Hook Triggered: ${event}`);
-    if (signature === expectedSignature) {
-        const event = JSON.parse(req.body).event;
+        if (signature !== expectedSignature) {
+            console.error("❌ Webhook validation failed: Cryptographic signature mismatch.");
+            return res.status(400).send('Invalid signature verification payload.');
+        }
 
+        // 2. Parse Body and Extract Event
+        const parsedBody = JSON.parse(req.body);
+        const event = parsedBody.event;
+        console.log(`📡 Razorpay Webhook Event Hook Triggered: ${event}`);
+
+        // 3. Handle successful payments
         if (event === 'order.paid' || event === 'payment.captured') {
 
-            // Extract entities universally depending on event shape
             const paymentEntity = parsedBody.payload.payment.entity;
             const targetOrderId = paymentEntity.order_id;
             const targetPaymentId = paymentEntity.id;
 
-            console.log(`💳 Processing business logic for Order: ${targetOrderId}`);
+            console.log(`💳 Processing logic for Razorpay Order: ${targetOrderId}`);
 
-            // 3. Find matching local pending record inside your unified Payment tracking system
+            // =========================================================================
+            // SCENARIO A: MEMBERSHIPS, CARDS, & SERVICES (Stored in paymentModel)
+            // =========================================================================
             const paymentDoc = await paymentModel.findOne({ razorpayOrderId: targetOrderId });
 
-            if (!paymentDoc) {
-                console.error(`⚠️ Payment record reference missing for incoming order: ${targetOrderId}`);
-                return res.status(200).send('ok'); // Return 200 to stop retry loops
-            }
-
-            // 4. Idempotency Check: Short-circuit if this order was handled by the alternate event
-            if (paymentDoc.status === 'Success') {
-                console.log(`ℹ️ Order ${targetOrderId} already processed successfully. Skipping repeat loop.`);
-                return res.status(200).send('ok');
-            }
-
-            // 5. Update Unified Ledger Document
-            paymentDoc.status = 'Success';
-            await paymentDoc.save();
-            console.log(`📝 Unified Payment doc updated to Success for user: ${paymentDoc.userId}`);
-
-            // 6. Plan Allocation Logic if paymentType matches 'Membership'
-            if (paymentDoc.paymentType === 'Membership') {
-                console.log(`🎯 Context matches 'Membership'. Routing flow directly inside plan.controller...`);
-
-                try {
-                    // Call it directly as a standard function by injecting the IDs straight through
-                    await processPlanActivation(
-                        paymentDoc.userId,
-                        paymentDoc.metadata?.planId,
-                        targetOrderId,
-                        targetPaymentId
-                    );
-                    console.log(`✅ Membership activation loop processed cleanly.`);
-
-                    console.log(`🎁 Membership includes Cashback Card. Activating complimentary card now...`);
-                    await processCashbackCardActivation(
-                        paymentDoc.userId,
-                        targetOrderId,
-                        targetPaymentId
-                    );
-                    console.log(`✅ Complimentary Cashback Card wallet and access privileges successfully activated.`);
-
-                } catch (activationError) {
-                    console.error(`❌ Plan worker error during webhook lifecycle:`, activationError.message);
+            if (paymentDoc) {
+                // Idempotency Check
+                if (paymentDoc.status === 'Success') {
+                    console.log(`ℹ️ Order ${targetOrderId} already processed. Skipping repeat loop.`);
+                    return res.status(200).send('ok');
                 }
-            }
-            else if (paymentDoc.paymentType === 'CashbackCard') {
-                console.log(`🎯 Context matches 'CashbackCard'. Activating pure worker function...`);
-                try {
-                    await processCashbackCardActivation(
-                        paymentDoc.userId,
-                        targetOrderId,
-                        targetPaymentId
-                    );
-                    console.log(`✅ Cashback Card wallet and access privileges successfully activated.`);
-                } catch (err) {
-                    console.error(`❌ Cashback Card activation worker failure:`, err.message);
+
+                paymentDoc.status = 'Success';
+                await paymentDoc.save();
+                console.log(`📝 Unified Payment doc updated to Success for user: ${paymentDoc.userId}`);
+
+                if (paymentDoc.paymentType === 'Membership') {
+                    console.log(`🎯 Context matches 'Membership'. Routing flow...`);
+                    try {
+                        await processPlanActivation(paymentDoc.userId, paymentDoc.metadata?.planId, targetOrderId, targetPaymentId);
+                        console.log(`🎁 Activating complimentary Cashback Card now...`);
+                        await processCashbackCardActivation(paymentDoc.userId, targetOrderId, targetPaymentId);
+                        console.log(`✅ Membership & Cashback Card activated.`);
+                    } catch (err) { console.error(`❌ Membership worker error:`, err.message); }
                 }
-            }
-            else if (paymentDoc.paymentType === 'ServiceBooking') {
-                console.log(`🎯 Context matches 'ServiceBooking'. Activating worker function...`);
-                try {
-                    await processServiceBooking(
-                        paymentDoc.userId,
-                        paymentDoc.metadata
-                    );
-                    console.log(`✅ Service Booking successfully activated and assigned.`);
-                } catch (err) {
-                    console.error(`❌ Service Booking worker failure:`, err.message);
-                    // Depending on your business logic, you might want to trigger an auto-refund here 
-                    // if the worker fails (e.g., if no agents were available post-payment).
+                else if (paymentDoc.paymentType === 'CashbackCard') {
+                    console.log(`🎯 Context matches 'CashbackCard'. Routing flow...`);
+                    try {
+                        await processCashbackCardActivation(paymentDoc.userId, targetOrderId, targetPaymentId);
+                        console.log(`✅ Cashback Card successfully activated.`);
+                    } catch (err) { console.error(`❌ Cashback Card worker error:`, err.message); }
                 }
+                else if (paymentDoc.paymentType === 'ServiceBooking') {
+                    console.log(`🎯 Context matches 'ServiceBooking'. Routing flow...`);
+                    try {
+                        await processServiceBooking(paymentDoc.userId, paymentDoc.metadata);
+                        console.log(`✅ Service Booking successfully assigned.`);
+                    } catch (err) { console.error(`❌ Service Booking worker error:`, err.message); }
+                }
+
+                return res.status(200).send('ok'); // Done processing Scenario A
             }
+
+
+            // =========================================================================
+            // SCENARIO B: LOCAL STORE OFFLINE ORDERS (Stored in orderModel)
+            // =========================================================================
+            const offlineOrders = await orderModel.find({ razorpayOrderId: targetOrderId, status: 'Pending' });
+
+            if (offlineOrders && offlineOrders.length > 0) {
+                console.log(`🛍️ Found ${offlineOrders.length} pending Local Store Orders for Razorpay ID: ${targetOrderId}`);
+
+                const orderUserId = offlineOrders[0].user;
+                let totalOrderValue = 0;
+
+                // 1. Mark all split orders as Accepted
+                for (let order of offlineOrders) {
+                    order.status = 'Accepted';
+                    await order.save();
+                    totalOrderValue += order.totalAmount; // Sum up the true worth of the cart
+                }
+
+                // 2. Fetch or Create the User's Cashback Wallet
+                let wallet = await cashbackWalletModel.findOne({ userId: orderUserId });
+                if (!wallet) {
+                    wallet = await cashbackWalletModel.create({ userId: orderUserId, pointsBalance: 0, lifetimePointsEarned: 0 });
+                }
+
+                // 3. Deduct Points (If the user burned points during checkout)
+                const pointsBurned = offlineOrders[0].pointsUsed || 0;
+                if (pointsBurned > 0) {
+                    wallet.pointsBalance -= pointsBurned;
+
+                    await cashbackTransactionModel.create({
+                        userId: orderUserId,
+                        amount: -pointsBurned, // Negative for debit
+                        type: 'DEBIT',
+                        description: 'Redeemed points for Local Store Purchase',
+                        razorpayOrderId: targetOrderId
+                    });
+                    console.log(`🔥 Deducted ${pointsBurned} points from user ${orderUserId}`);
+                }
+
+                // 4. Award 1% Cashback on the total actual value of the items
+                const cashbackEarned = Math.floor(totalOrderValue * 0.01); // 1% Hardcoded
+                if (cashbackEarned > 0) {
+                    wallet.pointsBalance += cashbackEarned;
+                    wallet.lifetimePointsEarned += cashbackEarned;
+
+                    await cashbackTransactionModel.create({
+                        userId: orderUserId,
+                        amount: cashbackEarned, // Positive for credit
+                        type: 'CREDIT',
+                        description: '1% Cashback for Local Store Purchase',
+                        razorpayOrderId: targetOrderId
+                    });
+                    console.log(`💰 Awarded ₹${cashbackEarned} cashback to user ${orderUserId}`);
+                }
+
+                await wallet.save();
+
+                // 5. Clear the User's Offline Cart
+                await offlineCartModel.findOneAndDelete({ user: orderUserId });
+                console.log(`🛒 Cart cleared for user ${orderUserId}. Store Order processing complete!`);
+
+                return res.status(200).send('ok'); // Done processing Scenario B
+            }
+
+
+            // =========================================================================
+            // SCENARIO C: UNKNOWN ORDER
+            // =========================================================================
+            console.error(`⚠️ No matching order found in ANY database for Razorpay ID: ${targetOrderId}`);
+            return res.status(200).send('ok'); // Send 200 so Razorpay stops pinging us
         }
-        res.status(200).send('ok');
-    } else {
-        res.status(400).send('Invalid signature');
+
+        // Catch-all for non-payment events
+        return res.status(200).send('ok');
+
+    } catch (error) {
+        console.error("❌ Critical error processing webhook:", error);
+        // Returning 500 tells Razorpay to retry this webhook later
+        return res.status(500).send('Internal Server Error');
     }
 };

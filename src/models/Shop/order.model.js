@@ -9,6 +9,7 @@ const offlineOrderSchema = new mongoose.Schema({
         name: String,
         price: Number,
         quantity: Number,
+        size: { type: String, default: null }, // NEW: Variant support
         image: String
     }],
     totalAmount: { type: Number, required: true },
@@ -16,7 +17,16 @@ const offlineOrderSchema = new mongoose.Schema({
         type: String, 
         enum: ['Pending', 'Accepted', 'Ready', 'Completed', 'Cancelled'], 
         default: 'Pending' 
+    },
+    
+    // === NEW ADMIN LEDGER & PAYMENT FIELDS ===
+    razorpayOrderId: { type: String, default: null, index: true },
+    pointsUsed: { type: Number, default: 0 },
+    payoutStatus: { 
+        type: String, 
+        enum: ['Pending', 'Settled'], 
+        default: 'Pending' 
     }
-}, { timestamps: true });
+}, { timestamps: true, versionKey: false });
 
 module.exports = mongoose.model('OfflineOrder', offlineOrderSchema);

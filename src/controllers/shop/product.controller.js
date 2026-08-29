@@ -467,13 +467,31 @@ exports.getTopDeals = async (req, res, next) => {
 
         const fetchDeals = async (matchQuery, limit) => {
             return await productModel.aggregate([
-                { $match: { ...matchQuery, isActive: true, inStock: true, salePrice: { $exists: true } } },
+                {
+                    $match: {
+                        ...matchQuery,
+                        isActive: true,
+                        adminDisabled: false, // STRICT CHECK: Hide admin suspended products
+                        salePrice: { $exists: true, $gt: 0 },
+                        // STRICT STOCK CHECK: Must have physical stock > 0
+                        $or: [
+                            { hasVariants: false, totalStock: { $gt: 0 } },
+                            { hasVariants: true, "variants.stock": { $gt: 0 } }
+                        ]
+                    }
+                },
+                {
+                    $addFields: {
+                        // Use basePrice or price depending on what exists
+                        calcPrice: { $ifNull: ["$basePrice", "$price"] }
+                    }
+                },
                 {
                     $addFields: {
                         discountPercentage: {
                             $cond: {
-                                if: { $gt: ["$basePrice", 0] },
-                                then: { $round: [{ $multiply: [{ $divide: [{ $subtract: ["$basePrice", "$salePrice"] }, "$basePrice"] }, 100] }, 0] },
+                                if: { $gt: ["$calcPrice", 0] },
+                                then: { $round: [{ $multiply: [{ $divide: [{ $subtract: ["$calcPrice", "$salePrice"] }, "$calcPrice"] }, 100] }, 0] },
                                 else: 0
                             }
                         }
@@ -483,9 +501,19 @@ exports.getTopDeals = async (req, res, next) => {
                 { $limit: limit },
                 {
                     $project: {
-                        name: 1, basePrice: 1, salePrice: 1, discountPercentage: 1,
-                        displayImage: "$mainImage.url",
-                        shop: 1
+                        name: 1,
+                        basePrice: 1,
+                        price: 1,
+                        salePrice: 1,
+                        discountPercentage: 1,
+                        shop: 1,
+                        // SMART MAPPING FOR IMAGES
+                        displayImage: {
+                            $ifNull: [
+                                "$mainImage.url",
+                                { $arrayElemAt: ["$images.url", 0] }
+                            ]
+                        }
                     }
                 }
             ]);
