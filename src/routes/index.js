@@ -22,6 +22,7 @@ const serviceRouter = require('./services/serviceCategory.routes.js')
 const serviceAgentrouter = require('./services/serviceAgent.routes.js')
 const cashBackRouter = require('./cashback.routes.js')
 const shopAuthRouter = require('./shop/shopAuth.routes.js')
+const payoutRouter = require('./payout.routes.js')
 const router = express.Router()
 
 router.use('/users', userRouter)
@@ -31,6 +32,7 @@ router.use('/admin', adminRouter)
 router.use('/wallet', walletRouter)
 router.use('/team', teamRouter)
 router.use('/kyc', kycRouter)
+router.use('/api/mlm/payouts', payoutRouter);
 
 router.use('/category', categoryRouter);
 router.use('/product', productRouter);

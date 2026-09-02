@@ -1,6 +1,6 @@
 const express = require('express')
 const multer = require('multer');
-const { createUser, updateProfileUnified, getKycData, getMe, getUsersAdmin } = require('../controllers/user.controller');
+const { createUser, updateProfileUnified, getKycData, getMe, getUsersAdmin, manuallyUpdateUserKyc } = require('../controllers/user.controller');
 const { requireAuth } = require('../middleware/auth.middleware');
 
 const userRouter = express.Router()
@@ -15,5 +15,6 @@ userRouter.get('/kyc-status', requireAuth, getKycData);
 userRouter.get('/me', requireAuth, getMe);
 
 userRouter.get('/admin/all', getUsersAdmin);
+userRouter.put('/admin/user/:userId/kyc', manuallyUpdateUserKyc);
 
 module.exports = userRouter

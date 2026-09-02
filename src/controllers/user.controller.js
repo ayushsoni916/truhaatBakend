@@ -155,28 +155,60 @@ const getUsersAdmin = async (req, res, next) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
-        const type = req.query.type || 'all'; // Filters: 'all', 'mlm', 'subadmin'
+        const type = req.query.type || 'all';
+        const search = req.query.search || '';
+        const kyc = req.query.kyc || 'ALL';
 
-        // Build the query based on the filter
-        let query = {};
+        // Use $and array to safely combine multiple conditions (type, search, kyc)
+        let andConditions = [];
+
+        // 1. Role / Type Filter
         if (type === 'mlm') {
-            query.role = 'USER';
-            query.currentPlan = { $ne: null }; // MLM users are those who have bought a plan
+            andConditions.push({ role: 'USER', currentPlan: { $ne: null } });
         } else if (type === 'subadmin') {
-            query.role = 'SUBADMIN';
+            andConditions.push({ role: 'SUBADMIN' });
+        }
+
+        // 2. Search Filter (Regex on Name, Phone, or Referral Code)
+        if (search) {
+            andConditions.push({
+                $or: [
+                    { firstName: { $regex: search, $options: 'i' } },
+                    { lastName: { $regex: search, $options: 'i' } },
+                    { phone: { $regex: search, $options: 'i' } },
+                    { referralCode: { $regex: search, $options: 'i' } }
+                ]
+            });
+        }
+
+        // 3. KYC Filter
+        if (kyc === 'VERIFIED') {
+            andConditions.push({ isAadhaarVerified: true, isPanVerified: true, isBankVerified: true });
+        } else if (kyc === 'PENDING') {
+            andConditions.push({
+                $or: [
+                    { isAadhaarVerified: false },
+                    { isPanVerified: false },
+                    { isBankVerified: false }
+                ]
+            });
+        }
+
+        // Construct final query
+        let query = {};
+        if (andConditions.length > 0) {
+            query.$and = andConditions;
         }
 
         const skip = (page - 1) * limit;
 
-        // Get total counts for pagination
         const totalUsers = await User.countDocuments(query);
         const totalPages = Math.ceil(totalUsers / limit);
 
-        // Fetch paginated users (excluding sensitive document numbers for safety)
         const users = await User.find(query)
-            .select('firstName lastName profilePic phone email role referralCode directActiveRefCount isAadhaarVerified isPanVerified currentPlan createdAt')
-            .populate('currentPlan', 'name planType') // Get plan name instead of just ID
-            .sort({ createdAt: -1 }) // Newest first
+            .select('firstName lastName profilePic phone email role referralCode referredBy directActiveRefCount isAadhaarVerified isPanVerified isBankVerified bank currentPlan planActivatedAt createdAt')
+            .populate('currentPlan', 'name planType price') // Added 'price' here
+            .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit)
             .lean();
@@ -197,7 +229,74 @@ const getUsersAdmin = async (req, res, next) => {
     }
 };
 
+// Manually Update User KYC & Bank (Admin)
+const manuallyUpdateUserKyc = async (req, res, next) => {
+    try {
+        const { userId } = req.params;
+        const { aadhaar, pan, bank } = req.body;
+
+        const updateData = {};
+
+        // 1. Aadhaar Block (If any Aadhaar data is passed, ALL must be present)
+        if (aadhaar) {
+            if (!aadhaar.number || !aadhaar.name || !aadhaar.dob || !aadhaar.gender || !aadhaar.address) {
+                return res.status(400).json({ success: false, error: 'All Aadhaar fields (number, name, dob, gender, address) are required.' });
+            }
+            updateData['aadhaar.number'] = aadhaar.number;
+            updateData['aadhaar.name'] = aadhaar.name;
+            updateData['aadhaar.dob'] = aadhaar.dob;
+            updateData['aadhaar.gender'] = aadhaar.gender;
+            updateData['aadhaar.address'] = aadhaar.address; // Saves as Object
+            updateData['aadhaar.verifiedAt'] = new Date();
+            updateData.isAadhaarVerified = true;
+        }
+
+        // 2. PAN Block
+        if (pan) {
+            if (!pan.number || !pan.name) {
+                return res.status(400).json({ success: false, error: 'All PAN fields (number, name) are required.' });
+            }
+            updateData['pan.number'] = pan.number;
+            updateData['pan.name'] = pan.name;
+            updateData['pan.verifiedAt'] = new Date();
+            updateData.isPanVerified = true;
+        }
+
+        // 3. Bank Block
+        if (bank) {
+            if (!bank.accountNumber || !bank.ifsc || !bank.bankName) {
+                return res.status(400).json({ success: false, error: 'All Bank fields (accountNumber, ifsc, bankName) are required.' });
+            }
+            updateData['bank.accountNumber'] = bank.accountNumber;
+            updateData['bank.ifsc'] = bank.ifsc;
+            updateData['bank.bankName'] = bank.bankName;
+            updateData['bank.verifiedAt'] = new Date();
+            updateData.isBankVerified = true;
+        }
+
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({ success: false, error: 'No valid KYC data provided to update.' });
+        }
+
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            { $set: updateData },
+            { new: true }
+        );
+
+        if (!updatedUser) {
+            return res.status(404).json({ success: false, error: 'User not found' });
+        }
+
+        res.status(200).json({ success: true, message: 'KYC manually updated.', data: updatedUser });
+    } catch (error) {
+        console.error('manuallyUpdateUserKyc error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
+
 // Don't forget to export it!
 // module.exports = { createUser, updateProfileUnified, getKycData, getMe, getUsersAdmin };
 
-module.exports = { createUser, updateProfileUnified, getKycData, getMe, getUsersAdmin };
+module.exports = { createUser, updateProfileUnified, getKycData, getMe, getUsersAdmin, manuallyUpdateUserKyc };
