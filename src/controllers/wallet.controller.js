@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Commission = require('../models/commission.model');
 const User = require('../models/user.model');
 const Plan = require('../models/plan.model');
+const PayoutRequest = require('../models/payoutRequest.model');
 
 // small helper because your auth payload structure is messy
 function getAuthUserId(req) {
@@ -56,6 +57,15 @@ const getWalletSummary = async (req, res) => {
         }
       }
     }
+    // 2. Subtract pending and approved withdrawals from available balance
+    const payouts = await PayoutRequest.aggregate([
+      { $match: { user: new mongoose.Types.ObjectId(userId), status: { $in: ['PENDING', 'APPROVED'] } } },
+      { $group: { _id: null, totalWithdrawn: { $sum: '$amount' } } }
+    ]);
+    const totalWithdrawn = payouts.length > 0 ? payouts[0].totalWithdrawn : 0;
+
+    // 3. Final Available Balance
+    releasedTotal = Math.max(0, releasedTotal - totalWithdrawn);
 
     return res.json({
       success: true,
@@ -84,35 +94,47 @@ const getWalletHistory = async (req, res) => {
 
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
-
-    const filter = { earner: new mongoose.Types.ObjectId(userId) };
-
     const { kind, status } = req.query;
 
+    // ----------------------------------------------------
+    // 1. FETCH COMMISSIONS (EARNINGS)
+    // ----------------------------------------------------
+    const commissionFilter = { earner: new mongoose.Types.ObjectId(userId) };
     if (kind && ['ROOT_1P', 'MLM_LEVEL'].includes(kind)) {
-      filter.kind = kind;
+      commissionFilter.kind = kind;
     }
-
+    // Only apply 'RELEASED' or 'FROZEN' filter to commissions
     if (status && ['RELEASED', 'FROZEN'].includes(status)) {
-      filter.status = status;
+      commissionFilter.status = status;
     }
 
-    const skip = (page - 1) * limit;
+    const commissions = await Commission.find(commissionFilter)
+      .populate('fromUser', 'firstName lastName phone')
+      .populate('plan', 'name price')
+      .populate('purchase', 'paidAt')
+      .lean();
 
-    const [items, total] = await Promise.all([
-      Commission.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate('fromUser', 'firstName lastName phone')
-        .populate('plan', 'name price')
-        .populate('purchase', 'paidAt')
-        .lean(),
-      Commission.countDocuments(filter)
-    ]);
+    // ----------------------------------------------------
+    // 2. FETCH PAYOUTS (WITHDRAWALS)
+    // ----------------------------------------------------
+    const payoutFilter = { user: new mongoose.Types.ObjectId(userId) };
+    let payouts = [];
 
-    const mapped = items.map((c) => ({
+    // Only fetch payouts if the frontend isn't explicitly filtering for 'FROZEN' or 'RELEASED' commissions
+    if (!status || !['RELEASED', 'FROZEN'].includes(status)) {
+      // If frontend filters by payout status specifically
+      if (status && ['PENDING', 'APPROVED', 'REJECTED'].includes(status)) {
+        payoutFilter.status = status;
+      }
+      payouts = await PayoutRequest.find(payoutFilter).lean();
+    }
+
+    // ----------------------------------------------------
+    // 3. MAP AND NORMALIZE BOTH ARRAYS
+    // ----------------------------------------------------
+    const mappedCommissions = commissions.map((c) => ({
       id: c._id,
+      type: 'EARNING', // Distinguishes earning vs withdrawal in UI
       kind: c.kind,
       status: c.status,
       amount: c.amount,
@@ -136,12 +158,39 @@ const getWalletHistory = async (req, res) => {
       createdAt: c.createdAt
     }));
 
+    const mappedPayouts = payouts.map((p) => ({
+      id: p._id,
+      type: 'WITHDRAWAL', // Tells frontend to show in Red / minus sign
+      kind: 'PAYOUT',
+      status: p.status, // PENDING, APPROVED, REJECTED
+      amount: p.amount,
+      level: null,
+      fromUser: null,
+      plan: null,
+      purchaseId: null,
+      createdAt: p.createdAt
+    }));
+
+    // ----------------------------------------------------
+    // 4. COMBINE, SORT, AND PAGINATE
+    // ----------------------------------------------------
+    // Merge both arrays
+    const combined = [...mappedCommissions, ...mappedPayouts];
+
+    // Sort globally by newest first
+    combined.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    // Apply Pagination in memory (since we combined two different database collections)
+    const total = combined.length;
+    const skip = (page - 1) * limit;
+    const paginatedItems = combined.slice(skip, skip + limit);
+
     return res.json({
       success: true,
       page,
       limit,
       total,
-      items: mapped
+      items: paginatedItems
     });
   } catch (err) {
     console.error('getWalletHistory error', err);

@@ -32,7 +32,7 @@ router.use('/admin', adminRouter)
 router.use('/wallet', walletRouter)
 router.use('/team', teamRouter)
 router.use('/kyc', kycRouter)
-router.use('/api/mlm/payouts', payoutRouter);
+router.use('/payouts', payoutRouter);
 
 router.use('/category', categoryRouter);
 router.use('/product', productRouter);
