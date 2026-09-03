@@ -445,6 +445,35 @@ const getUserServiceHistory = async (req, res) => {
     }
 };
 
+// =========================================================
+// 7. GET ALL SERVICE BOOKINGS FOR ADMIN PANEL
+// =========================================================
+const getAllServiceBookingsByAdmin = async (req, res) => {
+    try {
+        const bookings = await ServiceBooking.find()
+            .populate('user', 'firstName lastName phone email')
+            .populate('agent', 'firstName lastName phone')
+            .populate({
+                path: 'subService',
+                select: 'name description parentCategory',
+                populate: { path: 'parentCategory', select: 'name' }
+            })
+            .sort({ createdAt: -1 });
+
+        return res.status(200).json({
+            success: true,
+            count: bookings.length,
+            data: bookings
+        });
+    } catch (error) {
+        console.error('getAllServiceBookingsByAdmin Error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Internal server error while fetching admin service bookings.'
+        });
+    }
+};
+
 module.exports = {
     getLiveAvailableServices,
     bookServiceInstant,
@@ -452,5 +481,6 @@ module.exports = {
     completeServiceWithOtp,
     createServiceBookingOrder, // <-- Expose this to your Express Routes
     processServiceBooking,
-    getUserServiceHistory
+    getUserServiceHistory,
+    getAllServiceBookingsByAdmin
 };

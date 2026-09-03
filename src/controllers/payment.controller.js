@@ -265,3 +265,95 @@ exports.handleWebhook = async (req, res) => {
         return res.status(500).send('Internal Server Error');
     }
 };
+
+exports.getAllPayments = async (req, res, next) => {
+    try {
+        // Fetch all gateway payment logs and populate user info
+        const payments = await paymentModel.find()
+            .populate('userId', 'firstName lastName phone email')
+            .sort({ createdAt: -1 });
+
+        // Calculate stats
+        let totalCollected = 0;
+        let successfulTxns = 0;
+        let failedTxns = 0;
+        let pendingManual = 0;
+
+        const formattedPayments = payments.map(p => {
+            const isSuccess = p.status === 'Success';
+            const isFailed = p.status === 'Failed';
+            const isPending = p.status === 'Pending';
+
+            if (isSuccess) {
+                totalCollected += p.amount;
+                successfulTxns++;
+            } else if (isFailed) {
+                failedTxns++;
+            } else if (isPending) {
+                pendingManual++;
+            }
+
+            return {
+                _id: `PAY-${p._id.toString().slice(-6).toUpperCase()}`,
+                mongoId: p._id,
+                user: {
+                    name: p.userId ? `${p.userId.firstName || ''} ${p.userId.lastName || ''}`.trim() : 'Unknown User',
+                    phone: p.userId?.phone || 'N/A',
+                    email: p.userId?.email || 'N/A'
+                },
+                amount: p.amount,
+                currency: p.currency || 'INR',
+                purpose: p.paymentType,
+                referenceId: p.metadata?.planId || p.razorpayOrderId,
+                paymentMethod: 'Razorpay Gateway',
+                gatewayTxnId: p.razorpayOrderId,
+                status: p.status.toUpperCase(), // 'SUCCESS', 'FAILED', 'PENDING'
+                errorMessage: p.status === 'Failed' ? 'Transaction failed at gateway level.' : null,
+                createdAt: p.createdAt,
+                completedAt: isSuccess ? p.updatedAt : null
+            };
+        });
+
+        res.status(200).json({
+            success: true,
+            stats: {
+                totalCollected,
+                successfulTxns,
+                failedTxns,
+                pendingManual
+            },
+            data: formattedPayments
+        });
+    } catch (error) {
+        console.error("Fetch All Payments Error:", error);
+        next(error);
+    }
+};
+
+exports.verifyManualPayment = async (req, res, next) => {
+    try {
+        const { paymentId } = req.params; // Mongo _id
+        const { status } = req.body; // 'SUCCESS' or 'FAILED'
+
+        const mappedStatus = status === 'SUCCESS' ? 'Success' : 'Failed';
+
+        const paymentDoc = await paymentModel.findByIdAndUpdate(
+            paymentId,
+            { status: mappedStatus },
+            { new: true }
+        );
+
+        if (!paymentDoc) {
+            return res.status(404).json({ success: false, message: "Payment log not found." });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: `Payment status updated to ${mappedStatus}.`,
+            data: paymentDoc
+        });
+    } catch (error) {
+        console.error("Verify Manual Payment Error:", error);
+        next(error);
+    }
+};

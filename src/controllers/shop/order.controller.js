@@ -148,3 +148,111 @@ exports.getOfflineOrderHistory = async (req, res, next) => {
         next(error);
     }
 };
+
+// ============================================================================
+// ADMIN DASHBOARD CONTROLLERS (For your new React UI)
+// ============================================================================
+
+// --- GET ALL PLATFORM ORDERS (Admin Ledger) ---
+exports.getAllPlatformOrders = async (req, res, next) => {
+    try {
+        // Fetch all orders globally and populate user & shop details for the table
+        const orders = await orderModel.find()
+            .populate('user', 'firstName lastName phone email')
+            .populate('shop', 'name owner phone')
+            .sort({ createdAt: -1 }); // Newest first
+
+        res.status(200).json({
+            success: true,
+            count: orders.length,
+            data: orders
+        });
+    } catch (error) {
+        console.error("Fetch Admin Orders Error:", error);
+        next(error);
+    }
+};
+
+// --- MARK VENDOR PAYOUT AS SETTLED (Admin Ledger) ---
+exports.markPayoutSettled = async (req, res, next) => {
+    try {
+        const { orderId } = req.params; // Expects the Mongo _id of the Order
+
+        const order = await orderModel.findByIdAndUpdate(
+            orderId,
+            { payoutStatus: 'Settled' },
+            { new: true } // Return the updated document
+        )
+            .populate('user', 'firstName lastName')
+            .populate('shop', 'name');
+
+        if (!order) {
+            return res.status(404).json({ success: false, message: "Order not found." });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Payout marked as settled.",
+            data: order
+        });
+    } catch (error) {
+        console.error("Settle Payout Error:", error);
+        next(error);
+    }
+};
+
+// --- GET ORDERS FOR A SPECIFIC SHOP (Shop Dashboard) ---
+exports.getOrdersByShopId = async (req, res, next) => {
+    try {
+        const { shopId } = req.params;
+
+        if (!shopId) {
+            return res.status(400).json({ success: false, message: "Shop ID is required." });
+        }
+
+        const orders = await orderModel.find({ shop: shopId })
+            .populate('user', 'firstName lastName phone email')
+            .sort({ createdAt: -1 });
+
+        res.status(200).json({
+            success: true,
+            count: orders.length,
+            data: orders
+        });
+    } catch (error) {
+        console.error("Fetch Shop Orders Error:", error);
+        next(error);
+    }
+};
+
+// --- UPDATE ORDER FULFILLMENT STATUS (Pending -> Accepted -> Ready -> Completed / Cancelled) ---
+exports.updateOrderStatus = async (req, res, next) => {
+    try {
+        const { orderId } = req.params;
+        const { status } = req.body;
+
+        const allowedStatuses = ['Pending', 'Accepted', 'Ready', 'Completed', 'Cancelled'];
+        if (!allowedStatuses.includes(status)) {
+            return res.status(400).json({ success: false, message: "Invalid order status." });
+        }
+
+        const order = await orderModel.findByIdAndUpdate(
+            orderId,
+            { status },
+            { new: true }
+        ).populate('user', 'firstName lastName phone email');
+
+        if (!order) {
+            return res.status(404).json({ success: false, message: "Order not found." });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: `Order status updated to ${status}.`,
+            data: order
+        });
+    } catch (error) {
+        console.error("Update Order Status Error:", error);
+        next(error);
+    }
+};

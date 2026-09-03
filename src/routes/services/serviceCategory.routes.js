@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const { createCategory, getAllCategories, createSubcategory, getSubcategoriesByParent, createSubService, addLocationPrice, getAvailableServicesByLocation, getSubServicesBySubcategory, getPriceBookBySubService, getUniversalPriceBookGrid } = require('../../controllers/serviceControllers/serviceCategory.controller');
-const { getLiveAvailableServices, bookServiceInstant, createServiceBookingOrder, getUserServiceHistory } = require('../../controllers/serviceControllers/serviceBooking.controller');
+const { getLiveAvailableServices, bookServiceInstant, createServiceBookingOrder, getUserServiceHistory, getAllServiceBookingsByAdmin } = require('../../controllers/serviceControllers/serviceBooking.controller');
 const { requireAuth } = require('../../middleware/auth.middleware');
 const serviceRouter = express.Router();
 
@@ -43,5 +43,7 @@ serviceRouter.post('/live-availability', getLiveAvailableServices);
 serviceRouter.post('/book-now', requireAuth, bookServiceInstant);
 serviceRouter.post('/create-service-order', requireAuth, createServiceBookingOrder);
 serviceRouter.post('/getServiceHistory', requireAuth, getUserServiceHistory);
+
+serviceRouter.get('/admin/all-bookings', getAllServiceBookingsByAdmin);
 
 module.exports = serviceRouter;
