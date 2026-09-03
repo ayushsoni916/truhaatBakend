@@ -1,8 +1,11 @@
 const express = require('express')
-const { createPlan, getPlans, purchasePlan, getSubAdminPlans, getAllAdminPlans, deletePlan, updatePlanBenefits } = require('../controllers/plan.controller')
+const multer = require('multer');
+const { createPlan, getPlans, purchasePlan, getSubAdminPlans, getAllAdminPlans, deletePlan, updatePlanBenefits, uploadMlmBanner } = require('../controllers/plan.controller')
 const { requireAuth } = require('../middleware/auth.middleware')
 
 const planRouter = express.Router()
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 planRouter.post('/', createPlan)
 planRouter.get('/', requireAuth, getPlans)
@@ -12,5 +15,7 @@ planRouter.post('/purchase', requireAuth, purchasePlan);
 planRouter.get('/admin/all', getAllAdminPlans)
 planRouter.delete('/:id', deletePlan);
 planRouter.put('/:id/benefits', updatePlanBenefits);
+
+planRouter.post('/admin/upload-banner', upload.single('file'), uploadMlmBanner);
 
 module.exports = planRouter

@@ -29,6 +29,34 @@ const planPurchaseSchema = new mongoose.Schema({
     paidAt: {
         type: Date,
         default: Date.now
+    },
+    // ==========================================
+    // NEW: PHYSICAL DISPATCH & INVOICING FIELDS
+    // ==========================================
+    invoiceNumber: {
+        type: String,
+        sparse: true, // CRITICAL: Allows old purchases to exist without crashing the DB
+        unique: true
+    },
+    shippingAddress: {
+        type: Object // Snapshot of the user's address exactly as it was when they bought it
+    },
+    deliveryMethod: {
+        type: String,
+        enum: ['BY_HAND', 'COURIER'],
+        default: 'COURIER'
+    },
+    deliveryStatus: {
+        type: String,
+        enum: ['PENDING', 'DISPATCHED', 'DELIVERED'],
+        default: 'PENDING'
+    },
+    trackingDetails: {
+        courierPartner: { type: String, default: '' },
+        trackingId: { type: String, default: '' }
+    },
+    bundleSnapshot: {
+        type: Object // Snapshot of plan.bundleInfo (items, HSN, banner) at the time of purchase
     }
 }, {
     timestamps: true,

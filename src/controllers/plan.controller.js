@@ -1,10 +1,12 @@
 const cashbackWalletModel = require("../models/cashbackWallet.model");
 const Plan = require("../models/plan.model");
 const PlanPurchase = require("../models/planPurchase.model");
+const addressModel = require("../models/store/address.model");
 const User = require("../models/user.model");
+const cloudinary = require('cloudinary').v2;
 const { handlePlanPurchase } = require("../services/mlm.service");
 
-
+const generateInvoiceNumber = () => 'TRU-' + Date.now() + Math.floor(Math.random() * 1000);
 const createPlan = async (req, res) => {
     try {
         const {
@@ -89,7 +91,6 @@ const getPlans = async (req, res) => {
     }
 };
 
-
 const getSubAdminPlans = async (req, res) => {
     try {
         const plans = await Plan.find({
@@ -136,19 +137,27 @@ const deletePlan = async (req, res) => {
     }
 };
 
-// UPDATE PLAN BENEFITS ONLY
+// UPDATE PLAN BENEFITS & BUNDLE INFO
 const updatePlanBenefits = async (req, res) => {
     try {
         const { id } = req.params;
-        const { benefits } = req.body;
+        const { benefits, bundleInfo } = req.body; // Accept bundleInfo here
 
-        if (!Array.isArray(benefits)) {
+        if (benefits && !Array.isArray(benefits)) {
             return res.status(400).json({ error: 'Benefits must be an array of strings' });
+        }
+
+        const updateData = {};
+        if (benefits) updateData.benefits = benefits;
+
+        // Save the combo details and invoice items
+        if (bundleInfo) {
+            updateData.bundleInfo = bundleInfo;
         }
 
         const updatedPlan = await Plan.findByIdAndUpdate(
             id,
-            { benefits },
+            { $set: updateData },
             { new: true } // Returns the updated document
         );
 
@@ -158,6 +167,32 @@ const updatePlanBenefits = async (req, res) => {
     } catch (error) {
         console.error('updatePlanBenefits error', error);
         return res.status(500).json({ error: 'Internal server error' });
+    }
+};
+const uploadMlmBanner = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: "No image file provided." });
+        }
+
+        const stream = cloudinary.uploader.upload_stream(
+            { folder: "mlm_banners" },
+            (err, result) => {
+                if (err) {
+                    console.error("Cloudinary Upload Error:", err);
+                    return res.status(500).json({ success: false, error: "Failed to upload image." });
+                }
+
+                // Return the secure URL to the frontend
+                return res.status(200).json({ success: true, url: result.secure_url });
+            }
+        );
+
+        // Pass the file buffer to the Cloudinary stream
+        stream.end(req.file.buffer);
+    } catch (error) {
+        console.error('uploadMlmBanner error:', error);
+        return res.status(500).json({ success: false, error: 'Internal server error' });
     }
 };
 
@@ -230,7 +265,7 @@ const purchasePlan = async (req, res) => {
         return res.status(500).json({ error: 'Internal server error' });
     }
 };
-const processPlanActivation = async (userId, planId, razorpayOrderId = null, razorpayPaymentId = null) => {    // console.log("REQ.USER =", req.user);
+const processPlanActivation = async (userId, planId, addressId, razorpayOrderId = null, razorpayPaymentId = null) => {
     const user = await User.findById(userId);
     if (!user) throw new Error('User not found');
 
@@ -238,6 +273,13 @@ const processPlanActivation = async (userId, planId, razorpayOrderId = null, raz
 
     const plan = await Plan.findById(planId);
     if (!plan || !plan.isActive) throw new Error('Invalid or inactive plan');
+
+    // 1. Fetch the user's shipping address
+    let shippingAddress = null;
+    if (addressId) {
+        const address = await addressModel.findById(addressId);
+        if (address) shippingAddress = address.toObject();
+    }
 
     if (razorpayOrderId) {
         const structuralCheck = await PlanPurchase.findOne({ razorpayOrderId });
@@ -250,7 +292,10 @@ const processPlanActivation = async (userId, planId, razorpayOrderId = null, raz
         amount: plan.price,
         razorpayOrderId: razorpayOrderId,
         razorpayPaymentId: razorpayPaymentId,
-        paidAt: new Date()
+        paidAt: new Date(),
+        invoiceNumber: generateInvoiceNumber(),
+        shippingAddress: shippingAddress,
+        bundleSnapshot: plan.bundleInfo
     });
 
     // Update user plan info (no expiry for now)
@@ -311,5 +356,6 @@ module.exports = {
     getSubAdminPlans,
     getAllAdminPlans,
     updatePlanBenefits,
-    deletePlan
+    deletePlan,
+    uploadMlmBanner
 };
