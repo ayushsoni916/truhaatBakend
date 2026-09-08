@@ -7,6 +7,27 @@ const cloudinary = require('cloudinary').v2;
 const { handlePlanPurchase } = require("../services/mlm.service");
 
 const generateInvoiceNumber = () => 'TRU-' + Date.now() + Math.floor(Math.random() * 1000);
+
+const getMyPlanPurchases = async (req, res) => {
+    try {
+        // req.user._id comes from your requireAuth middleware
+        const userId = req.user._id;
+
+        const purchases = await PlanPurchase.find({ user: userId })
+            .populate('plan', 'name price') // Fetch basic plan info just in case
+            .sort({ createdAt: -1 }) // Newest first
+            .lean();
+
+        return res.status(200).json({
+            success: true,
+            data: purchases
+        });
+    } catch (error) {
+        console.error("Fetch Plan Purchases Error:", error);
+        return res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
 const createPlan = async (req, res) => {
     try {
         const {
@@ -357,5 +378,6 @@ module.exports = {
     getAllAdminPlans,
     updatePlanBenefits,
     deletePlan,
-    uploadMlmBanner
+    uploadMlmBanner,
+    getMyPlanPurchases
 };

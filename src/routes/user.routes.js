@@ -2,6 +2,7 @@ const express = require('express')
 const multer = require('multer');
 const { createUser, updateProfileUnified, getKycData, getMe, getUsersAdmin, manuallyUpdateUserKyc } = require('../controllers/user.controller');
 const { requireAuth } = require('../middleware/auth.middleware');
+const { getGlobalCrmUsers, getUserLedgerDetails } = require('../controllers/crm.controller');
 
 const userRouter = express.Router()
 
@@ -16,5 +17,8 @@ userRouter.get('/me', requireAuth, getMe);
 
 userRouter.get('/admin/all', getUsersAdmin);
 userRouter.put('/admin/user/:userId/kyc', manuallyUpdateUserKyc);
+
+userRouter.get('/admin/crm', getGlobalCrmUsers);
+userRouter.get('/admin/crm/:userId', getUserLedgerDetails);
 
 module.exports = userRouter
