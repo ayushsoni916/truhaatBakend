@@ -9,7 +9,7 @@ const { placeOfflineOrder, getOfflineOrderHistory, getAllPlatformOrders, markPay
 orderRouter.post('/place', placeOfflineOrder);
 
 // Endpoint for the user to see their previous offline orders
-orderRouter.get('/my-history', getOfflineOrderHistory);
+orderRouter.get('/my-history', requireAuth, getOfflineOrderHistory);
 
 orderRouter.get('/admin/all', getAllPlatformOrders);
 

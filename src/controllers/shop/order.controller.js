@@ -131,7 +131,8 @@ exports.placeOfflineOrder = async (req, res, next) => {
 // --- GET USER OFFLINE ORDER HISTORY ---
 exports.getOfflineOrderHistory = async (req, res, next) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user._id;
+        console.log(req.user)
 
         // Fetch orders for this user, populate shop name and logo/image
         const orders = await orderModel.find({ user: userId })

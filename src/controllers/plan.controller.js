@@ -10,13 +10,27 @@ const generateInvoiceNumber = () => 'TRU-' + Date.now() + Math.floor(Math.random
 
 const getMyPlanPurchases = async (req, res) => {
     try {
-        // req.user._id comes from your requireAuth middleware
-        const userId = req.user._id;
+        console.log("called getMyPlanPurchases");
+
+        // FIX: Extract the ID from either req.user.doc._id OR req.user.id
+        const authUser = req.user;
+        if (!authUser) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        // Use doc._id if it exists, otherwise fallback to id
+        const userId = authUser.doc?._id || authUser.id;
+
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID missing from token' });
+        }
 
         const purchases = await PlanPurchase.find({ user: userId })
             .populate('plan', 'name price') // Fetch basic plan info just in case
             .sort({ createdAt: -1 }) // Newest first
             .lean();
+
+        console.log("plan details found:", purchases.length);
 
         return res.status(200).json({
             success: true,
