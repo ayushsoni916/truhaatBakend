@@ -23,6 +23,7 @@ const serviceAgentrouter = require('./services/serviceAgent.routes.js')
 const cashBackRouter = require('./cashback.routes.js')
 const shopAuthRouter = require('./shop/shopAuth.routes.js')
 const payoutRouter = require('./payout.routes.js')
+const invoiceRouter = require('./invoice.routes.js')
 const router = express.Router()
 
 router.use('/users', userRouter)
@@ -52,5 +53,7 @@ router.use('/payments', paymentRouter);
 router.use('/cashback', cashBackRouter); // Add this line to include cashback routes
 router.use('/services', serviceRouter);
 router.use('/services/agents', serviceAgentrouter);
+
+router.use('/invoices', invoiceRouter);
 
 module.exports = router;
