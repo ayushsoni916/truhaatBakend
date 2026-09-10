@@ -264,7 +264,10 @@ const purchasePlan = async (req, res) => {
         const purchase = await PlanPurchase.create({
             user: user._id,
             plan: plan._id,
-            amount: plan.price
+            amount: plan.price,
+            invoiceNumber: generateInvoiceNumber(), // Needed for Track Orders screen
+            bundleSnapshot: plan.bundleInfo,        // Freezes the physical items in time!
+            deliveryStatus: 'PENDING'
         });
 
         // Update user plan info (no expiry for now)
@@ -284,7 +287,8 @@ const purchasePlan = async (req, res) => {
                 user: purchase.user,
                 plan: purchase.plan,
                 amount: purchase.amount,
-                paidAt: purchase.paidAt
+                paidAt: purchase.paidAt,
+                bundleSnapshot: purchase.bundleSnapshot
             },
             user: {
                 id: user._id,
