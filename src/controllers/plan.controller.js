@@ -1,3 +1,4 @@
+const cashbackTransactionModel = require("../models/cashbackTransaction.model");
 const cashbackWalletModel = require("../models/cashbackWallet.model");
 const Plan = require("../models/plan.model");
 const PlanPurchase = require("../models/planPurchase.model");

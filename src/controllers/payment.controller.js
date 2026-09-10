@@ -10,6 +10,7 @@ const orderModel = require('../models/Shop/order.model');
 const offlineCartModel = require('../models/Shop/offlineCart.model');
 const cashbackWalletModel = require('../models/cashbackWallet.model');
 const cashbackTransactionModel = require('../models/cashbackTransaction.model'); // Adjust path if needed
+const addressModel = require('../models/store/address.model');
 
 const razorpay = new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID,
@@ -19,12 +20,17 @@ const razorpay = new Razorpay({
 exports.createOrder = async (req, res) => {
     // console.log("🔹 createOrder invoked by user:", req.user);
     try {
-        const { planId } = req.body;
+        const { planId, address } = req.body;
         const userId = req.user.id;
         console.log("User ID:", userId, "Plan ID:", planId);
 
         if (!planId) {
             return res.status(400).json({ message: "planId is required" });
+        }
+
+        // 🔥 NEW: Validate address presence
+        if (!address || !address.street || !address.city || !address.state || !address.pincode) {
+            return res.status(400).json({ message: "Complete shipping address is required for combo delivery." });
         }
 
         const plan = await Plan.findById(planId);
@@ -35,11 +41,35 @@ exports.createOrder = async (req, res) => {
         // const calculatedAmount = plan.price;
         const calculatedAmount = 1;
 
+        // Find if exact address exists or create new one
+        let userAddress = await addressModel.findOne({
+            user: userId,
+            addressLine1: address.street,
+            pincode: address.pincode
+        });
+
+        if (!userAddress) {
+            userAddress = await addressModel.create({
+                user: userId,
+                firstName: req.user.firstName || 'User',
+                lastName: req.user.lastName || '',
+                phone: req.user.phone,
+                addressLine1: address.street,
+                area: address.city,
+                state: address.state,
+                pincode: address.pincode,
+                addressType: 'Home'
+            });
+        }
+
         // 1. Create Order in Razorpay
         const options = {
             amount: Math.round(calculatedAmount * 100), // convert to paise
             currency: "INR",
             receipt: `rcpt_${Date.now()}`,
+            notes: {
+                addressId: userAddress._id.toString()
+            }
         };
 
         const razorOrder = await razorpay.orders.create(options);
@@ -53,7 +83,8 @@ exports.createOrder = async (req, res) => {
             status: 'Pending',         // Matches exact enum casing
             paymentType: 'Membership', // Matches exact enum casing
             metadata: {
-                planId: plan._id
+                planId: plan._id,
+                addressId: userAddress._id.toString()
             }
         });
 
@@ -159,7 +190,11 @@ exports.handleWebhook = async (req, res) => {
                 if (paymentDoc.paymentType === 'Membership') {
                     console.log(`🎯 Context matches 'Membership'. Routing flow...`);
                     try {
-                        await processPlanActivation(paymentDoc.userId, paymentDoc.metadata?.planId, targetOrderId, targetPaymentId);
+                        // 🔥 NEW: Extract the addressId from either Razorpay notes or local metadata
+                        const razorpayNotes = parsedBody.payload.payment.entity.notes || {};
+                        const addressIdToPass = razorpayNotes.addressId || paymentDoc.metadata?.addressId || null;
+
+                        await processPlanActivation(paymentDoc.userId, paymentDoc.metadata?.planId, addressIdToPass, targetOrderId, targetPaymentId);
                         console.log(`🎁 Activating complimentary Cashback Card now...`);
                         await processCashbackCardActivation(paymentDoc.userId, targetOrderId, targetPaymentId);
                         console.log(`✅ Membership & Cashback Card activated.`);
