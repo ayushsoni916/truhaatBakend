@@ -23,6 +23,7 @@ exports.createOrder = async (req, res) => {
         const { planId, address } = req.body;
         const userId = req.user.id;
         console.log("User ID:", userId, "Plan ID:", planId);
+        console.log(req.user)
 
         if (!planId) {
             return res.status(400).json({ message: "planId is required" });
@@ -49,10 +50,13 @@ exports.createOrder = async (req, res) => {
         });
 
         if (!userAddress) {
-            // Strong fallbacks to prevent Mongoose validation crashes
-            const safeFirstName = (req.user.firstName && req.user.firstName.trim() !== '') ? req.user.firstName : 'User';
-            const safeLastName = (req.user.lastName && req.user.lastName.trim() !== '') ? req.user.lastName : 'Member';
-            const safePhone = req.user.phone || '0000000000';
+            // 🔥 FIX: Pull the actual user document from req.user.doc
+            const userDoc = req.user.doc || {};
+
+            // Strong fallbacks using the correct userDoc path
+            const safeFirstName = (userDoc.firstName && userDoc.firstName.trim() !== '') ? userDoc.firstName : 'User';
+            const safeLastName = (userDoc.lastName && userDoc.lastName.trim() !== '') ? userDoc.lastName : 'Member';
+            const safePhone = userDoc.phone || req.user.phone || '0000000000';
             const safeCity = address.city || 'Unknown Area';
 
             userAddress = await addressModel.create({

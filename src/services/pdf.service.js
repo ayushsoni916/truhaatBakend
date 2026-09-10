@@ -27,7 +27,8 @@ const generateInvoicePDF = (data, res) => {
     doc.font('Helvetica')
         .text(`Address: ${data.customer.addressStr}`, { width: 250 })
         .text(`State: ${data.customer.placeOfSupply} (Code: ${data.customer.stateCode})`)
-        .text(`Contact: ${data.customer.phone}`);
+        .text(`Contact: ${data.customer.phone}`)
+        .text(`Email: ${data.customer.email}`);
 
     // Right side: Invoice Meta 
     const paymentStr = data.invoiceDetails.paymentRef
