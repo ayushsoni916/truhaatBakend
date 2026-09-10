@@ -155,21 +155,30 @@ const getUsersAdmin = async (req, res, next) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
-        const type = req.query.type || 'all';
+        const type = req.query.type || 'all'; // 'mlm', 'subadmin', or 'all'
         const search = req.query.search || '';
         const kyc = req.query.kyc || 'ALL';
+        const status = req.query.status || 'ALL';
 
-        // Use $and array to safely combine multiple conditions (type, search, kyc)
         let andConditions = [];
 
-        // 1. Role / Type Filter
+        // 1. Role / Type Filter Fix
         if (type === 'mlm') {
+            // MLM Users must have a plan
             andConditions.push({ role: 'USER', currentPlan: { $ne: null } });
         } else if (type === 'subadmin') {
             andConditions.push({ role: 'SUBADMIN' });
+        } else {
+            // 'all' - Show users with plans OR subadmins
+            andConditions.push({
+                $or: [
+                    { role: 'USER', currentPlan: { $ne: null } },
+                    { role: 'SUBADMIN' }
+                ]
+            });
         }
 
-        // 2. Search Filter (Regex on Name, Phone, or Referral Code)
+        // 2. Search Filter
         if (search) {
             andConditions.push({
                 $or: [
@@ -186,42 +195,42 @@ const getUsersAdmin = async (req, res, next) => {
             andConditions.push({ isAadhaarVerified: true, isPanVerified: true, isBankVerified: true });
         } else if (kyc === 'PENDING') {
             andConditions.push({
-                $or: [
-                    { isAadhaarVerified: false },
-                    { isPanVerified: false },
-                    { isBankVerified: false }
-                ]
+                $or: [{ isAadhaarVerified: false }, { isPanVerified: false }, { isBankVerified: false }]
             });
         }
 
-        // Construct final query
-        let query = {};
-        if (andConditions.length > 0) {
-            query.$and = andConditions;
+        let query = { $and: andConditions };
+        let users = await User.find(query)
+            .select('-password')
+            .populate('currentPlan', 'name planType price')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        // 4. Attach PlanPurchase & filter by status if specified
+        const PlanPurchase = require('../models/planPurchase.model');
+        
+        let processedUsers = await Promise.all(users.map(async (user) => {
+            const purchase = await PlanPurchase.findOne({ user: user._id })
+                .sort({ createdAt: -1 })
+                .select('deliveryStatus invoiceNumber shippingAddress');
+            return { ...user, planPurchase: purchase };
+        }));
+
+        // 5. Delivery Status Filter
+        if (status !== 'ALL') {
+            processedUsers = processedUsers.filter(u => u.planPurchase?.deliveryStatus === status);
         }
 
+        // Pagination calculation after filters
+        const totalUsers = processedUsers.length;
+        const totalPages = Math.ceil(totalUsers / limit) || 1;
         const skip = (page - 1) * limit;
-
-        const totalUsers = await User.countDocuments(query);
-        const totalPages = Math.ceil(totalUsers / limit);
-
-        const users = await User.find(query)
-            .select('firstName lastName profilePic phone email role referralCode referredBy directActiveRefCount isAadhaarVerified isPanVerified isBankVerified bank currentPlan planActivatedAt createdAt')
-            .populate('currentPlan', 'name planType price') // Added 'price' here
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit)
-            .lean();
+        const paginatedUsers = processedUsers.slice(skip, skip + limit);
 
         res.status(200).json({
             success: true,
-            data: users,
-            pagination: {
-                currentPage: page,
-                totalPages,
-                totalUsers,
-                limit
-            }
+            data: paginatedUsers,
+            pagination: { currentPage: page, totalPages, totalUsers, limit }
         });
     } catch (error) {
         console.error('getUsersAdmin error:', error);

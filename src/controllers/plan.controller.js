@@ -387,6 +387,22 @@ const processCashbackCardActivation = async (userId, razorpayOrderId, razorpayPa
     return { success: true, user };
 };
 
+const updatePlanDeliveryStatus = async (req, res) => {
+    try {
+        const { purchaseId, status } = req.body;
+
+        const updatedPurchase = await PlanPurchase.findByIdAndUpdate(
+            purchaseId,
+            { deliveryStatus: status },
+            { new: true }
+        );
+
+        res.status(200).json({ success: true, data: updatedPurchase });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Failed to update delivery status' });
+    }
+};
+
 module.exports = {
     createPlan,
     getPlans,
@@ -398,5 +414,6 @@ module.exports = {
     updatePlanBenefits,
     deletePlan,
     uploadMlmBanner,
-    getMyPlanPurchases
+    getMyPlanPurchases,
+    updatePlanDeliveryStatus
 };
