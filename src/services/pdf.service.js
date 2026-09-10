@@ -5,7 +5,6 @@ const generateInvoicePDF = (data, res) => {
     // Initialize PDF Document with standard A4 margins
     const doc = new PDFDocument({ margin: 30, size: 'A4' });
 
-    // Pipe the PDF directly to the HTTP Response
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=${data.invoiceDetails.invoiceNo}.pdf`);
     doc.pipe(res);
@@ -13,87 +12,154 @@ const generateInvoicePDF = (data, res) => {
     // --- 1. HEADER (Company Details) ---
     doc.fontSize(16).font('Helvetica-Bold').text(data.company.name, { align: 'center' });
     doc.fontSize(9).font('Helvetica').text(data.company.address, { align: 'center' });
-    doc.text(`GSTIN/UIN: ${data.company.gstin} | Contact: ${data.company.phone} | Email: ${data.company.email}`, { align: 'center' });
+    doc.text(`GSTIN/UIN: ${data.company.gstin} | Contact: ${data.company.phone}`, { align: 'center' });
 
     doc.moveDown();
     doc.fontSize(14).font('Helvetica-Bold').text('Tax Invoice', { align: 'center', underline: true });
     doc.moveDown();
 
-    // --- 2. PARTY & INVOICE META DETAILS ---
+    // --- 2. BILLING & INVOICE META DETAILS ---
     const topY = doc.y;
 
-    // Left side: Customer
-    doc.fontSize(10).font('Helvetica-Bold').text(`Party: ${data.customer.name}`, 30, topY);
-    doc.font('Helvetica').fontSize(9)
-        .text(data.customer.addressStr)
-        .text(`State: ${data.customer.placeOfSupply}, Code: ${data.customer.stateCode}`)
+    // Left side: Customer (Properly Formatted)
+    doc.fontSize(10).font('Helvetica-Bold').text('Billed To:', 30, topY);
+    doc.fontSize(9).text(data.customer.name);
+    doc.font('Helvetica')
+        .text(`Address: ${data.customer.addressStr}`, { width: 250 })
+        .text(`State: ${data.customer.placeOfSupply} (Code: ${data.customer.stateCode})`)
         .text(`Contact: ${data.customer.phone}`);
 
-    // Right side: Invoice Meta
-    doc.font('Helvetica-Bold').fontSize(9)
-        .text(`Invoice No: ${data.invoiceDetails.invoiceNo}`, 350, topY)
-        .text(`Date: ${data.invoiceDetails.date}`)
-        .text(`Payment Terms: ${data.invoiceDetails.paymentTerms}`)
-        .text(`Place of Supply: ${data.customer.placeOfSupply}`);
+    // Right side: Invoice Meta 
+    const paymentStr = data.invoiceDetails.paymentRef
+        ? `${data.invoiceDetails.paymentTerms} - ${data.invoiceDetails.paymentRef}`
+        : data.invoiceDetails.paymentTerms;
 
-    // --- 3. TABLE HEADER ---
+    doc.font('Helvetica-Bold').fontSize(9)
+        // We explicitly set X and Y here so it starts at the same height as "Billed To:"
+        .text(`Invoice No: ${data.invoiceDetails.invoiceNo}`, 320, topY)
+        .text(`Order No: ${data.invoiceDetails.orderNo || 'N/A'}`)
+        .text(`Date: ${data.invoiceDetails.date}`)
+        .text(`Payment: ${paymentStr}`)
+        .text(`Courier: ${data.invoiceDetails.courierName || 'N/A'}`)
+        .text(`Tracking: ${data.invoiceDetails.trackingDetails || 'N/A'}`);
+
+    // --- 3. MAIN TABLE HEADER ---
     doc.moveDown(2);
     const tableTop = doc.y;
 
-    // Draw table background
     doc.rect(30, tableTop, 535, 20).fill('#f4f4f4');
-    doc.fillColor('#000000').font('Helvetica-Bold').fontSize(8);
+    doc.fillColor('#000000').font('Helvetica-Bold').fontSize(7);
 
-    // Define X coordinates for columns
-    const columns = {
-        sno: 35, desc: 65, hsn: 220, qty: 260, rate: 300,
-        taxable: 350, cgst: 400, sgst: 450, total: 510
+    const cols = {
+        sno: 32, desc: 50, hsn: 145, qty: 180, unit: 205, rate: 230,
+        discP: 265, discA: 300, taxable: 340, cgst: 390, sgst: 440, total: 490
     };
 
-    doc.text('Sl', columns.sno, tableTop + 5);
-    doc.text('Description of Goods', columns.desc, tableTop + 5);
-    doc.text('HSN', columns.hsn, tableTop + 5);
-    doc.text('Qty', columns.qty, tableTop + 5);
-    doc.text('Rate', columns.rate, tableTop + 5);
-    doc.text('Taxable', columns.taxable, tableTop + 5);
-    doc.text('CGST', columns.cgst, tableTop + 5);
-    doc.text('SGST', columns.sgst, tableTop + 5);
-    doc.text('Total', columns.total, tableTop + 5);
+    doc.text('Sl', cols.sno, tableTop + 5);
+    doc.text('Description', cols.desc, tableTop + 5);
+    doc.text('HSN', cols.hsn, tableTop + 5);
+    doc.text('Qty', cols.qty, tableTop + 5);
+    doc.text('Unit', cols.unit, tableTop + 5);
+    doc.text('Rate', cols.rate, tableTop + 5);
+    doc.text('Disc %', cols.discP, tableTop + 5);
+    doc.text('Disc Amt', cols.discA, tableTop + 5);
+    doc.text('Taxable', cols.taxable, tableTop + 5);
+    doc.text('CGST(%)', cols.cgst, tableTop + 5);
+    doc.text('SGST(%)', cols.sgst, tableTop + 5);
+    doc.text('Total', cols.total, tableTop + 5);
 
-    // --- 4. TABLE ROWS ---
+    // --- 4. MAIN TABLE ROWS ---
     let rowY = tableTop + 25;
-    doc.font('Helvetica').fontSize(8);
+    doc.font('Helvetica').fontSize(7);
 
     data.items.forEach((item, i) => {
-        // Draw line separator
         doc.moveTo(30, rowY - 5).lineTo(565, rowY - 5).stroke('#e0e0e0');
 
-        doc.text(i + 1, columns.sno, rowY);
-        doc.text(item.description, columns.desc, rowY, { width: 150 });
-        doc.text(item.hsn, columns.hsn, rowY);
-        doc.text(item.qty, columns.qty, rowY);
-        doc.text(item.rate.toFixed(2), columns.rate, rowY);
-        doc.text(item.taxableValue.toFixed(2), columns.taxable, rowY);
-        doc.text(`${item.cgst.rate}% \n${item.cgst.amount}`, columns.cgst, rowY);
-        doc.text(`${item.sgst.rate}% \n${item.sgst.amount}`, columns.sgst, rowY);
-        doc.text(item.totalAmount.toFixed(2), columns.total, rowY);
+        doc.text(i + 1, cols.sno, rowY);
+        doc.text(item.description, cols.desc, rowY, { width: 90 });
+        doc.text(item.hsn, cols.hsn, rowY);
+        doc.text(item.qty, cols.qty, rowY);
+        doc.text(item.unit || 'PCS', cols.unit, rowY);
+        doc.text(item.rate.toFixed(2), cols.rate, rowY);
+        doc.text((item.discPercent || 0).toFixed(2), cols.discP, rowY);
+        doc.text((item.discAmount || 0).toFixed(2), cols.discA, rowY);
+        doc.text(item.taxableValue.toFixed(2), cols.taxable, rowY);
 
-        rowY += 25; // Move down for next row
+        if (item.igst && item.igst.rate > 0) {
+            doc.text(`-`, cols.cgst, rowY);
+            doc.text(`IGST ${item.igst.rate}%\n${item.igst.amount.toFixed(2)}`, cols.sgst, rowY);
+        } else {
+            doc.text(`${item.cgst.rate}% \n${item.cgst.amount.toFixed(2)}`, cols.cgst, rowY);
+            doc.text(`${item.sgst.rate}% \n${item.sgst.amount.toFixed(2)}`, cols.sgst, rowY);
+        }
+
+        doc.text(item.totalAmount.toFixed(2), cols.total, rowY);
+
+        rowY += 25;
     });
 
     // --- 5. FOOTER & TOTALS ---
-    doc.moveTo(30, rowY).lineTo(565, rowY).stroke('#000000'); // Bold line
+    doc.moveTo(30, rowY).lineTo(565, rowY).stroke('#000000');
     rowY += 5;
 
-    doc.font('Helvetica-Bold');
-    doc.text('Total:', columns.rate, rowY);
-    doc.text(`₹${data.totals.taxableValue.toFixed(2)}`, columns.taxable, rowY);
-    doc.text(`₹${data.totals.cgst.toFixed(2)}`, columns.cgst, rowY);
-    doc.text(`₹${data.totals.sgst.toFixed(2)}`, columns.sgst, rowY);
-    doc.text(`₹${data.totals.grandTotal.toFixed(2)}`, columns.total, rowY);
+    doc.font('Helvetica-Bold').fontSize(8);
 
-    // --- 6. AMOUNT IN WORDS & SIGNATURE ---
+    // FIX: Moved 'Grand Total' left to cols.rate (230) to prevent the overlap issue!
+    doc.text('Grand Total:', cols.rate, rowY);
+    doc.text(`Rs. ${data.totals.taxableValue.toFixed(2)}`, cols.taxable, rowY);
+    doc.text(`Rs. ${data.totals.cgst.toFixed(2)}`, cols.cgst, rowY);
+    doc.text(`Rs. ${data.totals.sgst.toFixed(2)}`, cols.sgst, rowY);
+    doc.text(`Rs. ${data.totals.grandTotal.toFixed(2)}`, cols.total, rowY);
+
+    // --- 6. HSN SUMMARY TABLE ---
     doc.moveDown(3);
+    const summaryTop = doc.y;
+    doc.fontSize(10).font('Helvetica-Bold').text('HSN Summary', 30, summaryTop);
+
+    doc.rect(30, summaryTop + 15, 450, 15).fill('#f4f4f4');
+    doc.fillColor('#000000').font('Helvetica-Bold').fontSize(8);
+
+    const sumCols = { hsn: 40, taxable: 130, rate: 230, taxAmount: 320, total: 400 };
+    doc.text('HSN No', sumCols.hsn, summaryTop + 19);
+    doc.text('Taxable Value', sumCols.taxable, summaryTop + 19);
+    doc.text('Tax Rate', sumCols.rate, summaryTop + 19);
+    doc.text('Tax Amount', sumCols.taxAmount, summaryTop + 19);
+    doc.text('Total', sumCols.total, summaryTop + 19);
+
+    const hsnSummary = {};
+    data.items.forEach(item => {
+        const totalTaxRate = item.cgst.rate + item.sgst.rate + (item.igst ? item.igst.rate : 0);
+        const itemTaxAmt = item.cgst.amount + item.sgst.amount + (item.igst ? item.igst.amount : 0);
+
+        const groupKey = `${item.hsn}_${totalTaxRate}`;
+
+        if (!hsnSummary[groupKey]) {
+            hsnSummary[groupKey] = { hsn: item.hsn, taxable: 0, taxAmount: 0, total: 0, rate: totalTaxRate };
+        }
+
+        hsnSummary[groupKey].taxable += item.taxableValue;
+        hsnSummary[groupKey].taxAmount += itemTaxAmt;
+        hsnSummary[groupKey].total += (item.taxableValue + itemTaxAmt);
+    });
+
+    let sumRowY = summaryTop + 35;
+    doc.font('Helvetica').fontSize(8);
+
+    Object.values(hsnSummary).forEach(row => {
+        doc.moveTo(30, sumRowY - 3).lineTo(480, sumRowY - 3).stroke('#e0e0e0');
+
+        doc.text(row.hsn, sumCols.hsn, sumRowY);
+        doc.text(row.taxable.toFixed(2), sumCols.taxable, sumRowY);
+        doc.text(`${row.rate}%`, sumCols.rate, sumRowY);
+        doc.text(row.taxAmount.toFixed(2), sumCols.taxAmount, sumRowY);
+        doc.text(row.total.toFixed(2), sumCols.total, sumRowY);
+
+        sumRowY += 15;
+    });
+    doc.moveTo(30, sumRowY).lineTo(480, sumRowY).stroke('#000000');
+
+    // --- 7. AMOUNT IN WORDS & SIGNATURE ---
+    doc.y = sumRowY + 15;
     const amountInWords = converter.toWords(data.totals.grandTotal).toUpperCase();
     doc.font('Helvetica-Oblique').text(`Amount Chargeable (in words): INR ${amountInWords} ONLY`, 30, doc.y);
 
@@ -104,7 +170,6 @@ const generateInvoicePDF = (data, res) => {
     doc.moveDown(3);
     doc.text('Authorised Signatory', 300, doc.y, { align: 'right' });
 
-    // Finalize PDF
     doc.end();
 };
 
