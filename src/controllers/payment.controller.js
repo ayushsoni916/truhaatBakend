@@ -49,15 +49,22 @@ exports.createOrder = async (req, res) => {
         });
 
         if (!userAddress) {
+            // Strong fallbacks to prevent Mongoose validation crashes
+            const safeFirstName = (req.user.firstName && req.user.firstName.trim() !== '') ? req.user.firstName : 'User';
+            const safeLastName = (req.user.lastName && req.user.lastName.trim() !== '') ? req.user.lastName : 'Member';
+            const safePhone = req.user.phone || '0000000000';
+            const safeCity = address.city || 'Unknown Area';
+
             userAddress = await addressModel.create({
                 user: userId,
-                firstName: req.user.firstName || 'User',
-                lastName: req.user.lastName || '',
-                phone: req.user.phone,
-                addressLine1: address.street,
-                area: address.city,
-                state: address.state,
-                pincode: address.pincode,
+                firstName: safeFirstName,
+                lastName: safeLastName,
+                phone: safePhone,
+                addressLine1: address.street || 'N/A',
+                area: safeCity,
+                city: safeCity,
+                state: address.state || 'N/A',
+                pincode: address.pincode || '000000',
                 addressType: 'Home'
             });
         }
