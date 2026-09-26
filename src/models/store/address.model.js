@@ -11,14 +11,20 @@ const addressSchema = new mongoose.Schema({
     lastName: { type: String, required: true, trim: true },
     phone: { type: String, required: true, trim: true },
     email: { type: String, trim: true }, // Optional
-    
+
     addressLine1: { type: String, required: true },
     addressLine2: { type: String },
     area: { type: String, required: true },
     city: { type: String, required: true },
     state: { type: String, required: true },
+    stateCode: {
+        type: String,
+        required: true,
+        trim: true,
+        match: [/^\d{2}$/, 'Invalid GST state code']
+    },
     pincode: { type: String, required: true },
-    
+
     addressType: {
         type: String,
         enum: ['Home', 'Office', 'Other'],

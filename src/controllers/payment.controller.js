@@ -22,6 +22,8 @@ exports.createOrder = async (req, res) => {
     try {
         const { planId, address } = req.body;
         const userId = req.user.id;
+
+        const stateCode = String(address?.stateCode || '').trim();
         console.log("User ID:", userId, "Plan ID:", planId);
         console.log(req.user)
 
@@ -30,8 +32,16 @@ exports.createOrder = async (req, res) => {
         }
 
         // 🔥 NEW: Validate address presence
-        if (!address || !address.street || !address.city || !address.state || !address.pincode) {
-            return res.status(400).json({ message: "Complete shipping address is required for combo delivery." });
+        if (
+            !address?.street?.trim() ||
+            !address?.city?.trim() ||
+            !address?.state?.trim() ||
+            !/^\d{2}$/.test(stateCode) ||
+            !/^\d{6}$/.test(String(address?.pincode || '').trim())
+        ) {
+            return res.status(400).json({
+                message: "Complete and valid shipping address is required."
+            });
         }
 
         const plan = await Plan.findById(planId);
@@ -45,8 +55,10 @@ exports.createOrder = async (req, res) => {
         // Find if exact address exists or create new one
         let userAddress = await addressModel.findOne({
             user: userId,
-            addressLine1: address.street,
-            pincode: address.pincode
+            addressLine1: address.street.trim(),
+            state: address.state.trim(),
+            stateCode,
+            pincode: address.pincode.trim()
         });
 
         if (!userAddress) {
@@ -68,6 +80,7 @@ exports.createOrder = async (req, res) => {
                 area: safeCity,
                 city: safeCity,
                 state: address.state || 'N/A',
+                stateCode,
                 pincode: address.pincode || '000000',
                 addressType: 'Home'
             });

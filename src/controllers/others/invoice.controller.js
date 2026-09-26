@@ -65,10 +65,13 @@ const calculateInvoiceLine = (description, hsn, qty, unit, totalInclusive, taxPe
     const taxableValue = Number((totalInclusive / (1 + (taxPercent / 100))).toFixed(2));
     const taxAmount = Number((totalInclusive - taxableValue).toFixed(2));
 
-    let cgst = 0, sgst = 0, igst = 0;
+    let cgst = 0;
+    let sgst = 0;
+    let igst = 0;
+
     if (isRajasthan) {
         cgst = Number((taxAmount / 2).toFixed(2));
-        sgst = Number((taxAmount / 2).toFixed(2));
+        sgst = Number((taxAmount - cgst).toFixed(2));
     } else {
         igst = taxAmount;
     }
@@ -92,8 +95,13 @@ const getPlanInvoice = async (req, res) => {
         if (!purchase) return res.status(404).send('Invoice not found');
 
         // 1. Determine Tax Type (IGST vs CGST/SGST)
-        const userState = purchase.shippingAddress?.state?.toLowerCase() || '';
-        const isRajasthan = userState.includes('rajasthan');
+        const COMPANY_STATE_CODE = '08'; // Rajasthan
+
+        const customerStateCode = String(
+            purchase.shippingAddress?.stateCode || ''
+        ).padStart(2, '0');
+
+        const isRajasthan = customerStateCode === COMPANY_STATE_CODE;
 
         let invoiceLines = [];
         let physicalItemsTotal = 0;
@@ -150,7 +158,7 @@ const getPlanInvoice = async (req, res) => {
 
                 addressStr: `${purchase.shippingAddress?.addressLine1 || ''}, ${purchase.shippingAddress?.city || ''}, ${purchase.shippingAddress?.pincode || ''}`,
                 placeOfSupply: purchase.shippingAddress?.state || 'N/A',
-                stateCode: isRajasthan ? "08" : "N/A",
+                stateCode: customerStateCode || 'N/A',
 
                 // Same logic for phone: prioritize address, then user profile
                 phone: purchase.shippingAddress?.phone || purchase.user?.phone || 'N/A',
