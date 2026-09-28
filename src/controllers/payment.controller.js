@@ -12,6 +12,13 @@ const cashbackWalletModel = require('../models/cashbackWallet.model');
 const cashbackTransactionModel = require('../models/cashbackTransaction.model'); // Adjust path if needed
 const addressModel = require('../models/store/address.model');
 
+const mongoose = require('mongoose');
+
+// online products
+const OnlineOrder = require('../models/store/order.model');
+const onlineCartModel = require('../models/store/cart.model');
+const onlineProductModel = require('../models/store/product.model');
+
 const razorpay = new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID,
     key_secret: process.env.RAZORPAY_KEY_SECRET,
@@ -162,6 +169,202 @@ exports.createCashBackOrder = async (req, res) => {
     }
 };
 
+const processOnlineEcommercePayment = async paymentEntity => {
+    const razorpayOrderId = paymentEntity.order_id;
+    const razorpayPaymentId = paymentEntity.id;
+
+    const existingOrder = await OnlineOrder.findOne({
+        razorpayOrderId
+    });
+
+    // Not an online ecommerce payment.
+    if (!existingOrder) {
+        return { matched: false };
+    }
+
+    // Both payment.captured and order.paid can arrive.
+    if (existingOrder.paymentStatus === 'PAID') {
+        console.log(
+            `Online order ${existingOrder.orderId} already processed`
+        );
+
+        return {
+            matched: true,
+            alreadyProcessed: true
+        };
+    }
+
+    const expectedAmount = Math.round(
+        100
+        // Number(existingOrder.finalAmount) * 100
+    );
+
+    if (Number(paymentEntity.amount) !== expectedAmount) {
+        throw new Error(
+            `Amount mismatch for online order ${existingOrder.orderId}`
+        );
+    }
+
+    if (
+        String(paymentEntity.currency || '').toUpperCase() !== 'INR'
+    ) {
+        throw new Error(
+            `Currency mismatch for online order ${existingOrder.orderId}`
+        );
+    }
+
+    if (paymentEntity.status !== 'captured') {
+        throw new Error(
+            `Payment ${razorpayPaymentId} is not captured`
+        );
+    }
+
+    const session = await mongoose.startSession();
+    let processed = false;
+
+    try {
+        await session.withTransaction(async () => {
+            /*
+             * Only one webhook event can find this order as PENDING.
+             * If the transaction retries, reset this value.
+             */
+            processed = false;
+
+            const order = await OnlineOrder.findOne({
+                razorpayOrderId,
+                paymentStatus: 'PENDING'
+            }).session(session);
+
+            if (!order) {
+                return;
+            }
+
+            // Reduce stock using the frozen order items.
+            for (const item of order.items) {
+                const product = await onlineProductModel
+                    .findById(item.product)
+                    .session(session);
+
+                if (!product) {
+                    throw new Error(
+                        `Product not found: ${item.product}`
+                    );
+                }
+
+                const quantity = Number(item.quantity);
+
+                if (product.hasVariants) {
+                    const variant = product.variants.find(
+                        variantItem =>
+                            String(variantItem.size) ===
+                            String(item.size)
+                    );
+
+                    if (!variant || variant.stock < quantity) {
+                        throw new Error(
+                            `Insufficient stock for ${item.name}`
+                        );
+                    }
+
+                    variant.stock -= quantity;
+
+                    product.totalStock = product.variants.reduce(
+                        (total, variantItem) =>
+                            total + Number(variantItem.stock || 0),
+                        0
+                    );
+
+                    product.inStock = product.totalStock > 0;
+                } else {
+                    if (
+                        Number(product.totalStock || 0) <
+                        quantity
+                    ) {
+                        throw new Error(
+                            `Insufficient stock for ${item.name}`
+                        );
+                    }
+
+                    product.totalStock -= quantity;
+                    product.inStock = product.totalStock > 0;
+                }
+
+                await product.save({ session });
+            }
+
+            /*
+             * Remove only the purchased quantities.
+             * Do not delete newly-added cart products.
+             */
+            const cart = await onlineCartModel
+                .findOne({ user: order.user })
+                .session(session);
+
+            if (cart) {
+                for (const purchasedItem of order.items) {
+                    const cartItemIndex = cart.items.findIndex(
+                        cartItem =>
+                            String(cartItem.product) ===
+                            String(purchasedItem.product) &&
+                            String(cartItem.size || '') ===
+                            String(purchasedItem.size || '')
+                    );
+
+                    if (cartItemIndex === -1) {
+                        continue;
+                    }
+
+                    const remainingQuantity =
+                        Number(
+                            cart.items[cartItemIndex].quantity
+                        ) -
+                        Number(purchasedItem.quantity);
+
+                    if (remainingQuantity > 0) {
+                        cart.items[cartItemIndex].quantity =
+                            remainingQuantity;
+                    } else {
+                        cart.items.splice(cartItemIndex, 1);
+                    }
+                }
+
+                // Cart value changed, so remove the old coupon.
+                cart.couponCode = null;
+
+                if (cart.items.length === 0) {
+                    await onlineCartModel.deleteOne(
+                        { _id: cart._id },
+                        { session }
+                    );
+                } else {
+                    await cart.save({ session });
+                }
+            }
+
+            order.paymentStatus = 'PAID';
+            order.orderStatus = 'PLACED';
+            order.razorpayPaymentId = razorpayPaymentId;
+            order.paidAt = new Date();
+
+            if (!order.invoiceNumber) {
+                order.invoiceNumber =
+                    `INV-${order.orderId}`;
+            }
+
+            await order.save({ session });
+
+            processed = true;
+        });
+
+        return {
+            matched: true,
+            processed
+        };
+    } finally {
+        await session.endSession();
+    }
+};
+
 exports.handleWebhook = async (req, res) => {
     try {
         console.log("📡 Razorpay Webhook Received.");
@@ -242,9 +445,29 @@ exports.handleWebhook = async (req, res) => {
                 return res.status(200).send('ok'); // Done processing Scenario A
             }
 
+            // =========================================================================
+            // SCENARIO B: ONLINE ECOMMERCE ORDER
+            // =========================================================================
+            const onlineOrderResult =
+                await processOnlineEcommercePayment(paymentEntity);
+
+            if (onlineOrderResult.matched) {
+                if (onlineOrderResult.processed) {
+                    console.log(
+                        `Online ecommerce order placed successfully: ${targetOrderId}`
+                    );
+                } else {
+                    console.log(
+                        `Online ecommerce order already processed: ${targetOrderId}`
+                    );
+                }
+
+                return res.status(200).send('ok');
+            }
+
 
             // =========================================================================
-            // SCENARIO B: LOCAL STORE OFFLINE ORDERS (Stored in orderModel)
+            // SCENARIO C: LOCAL STORE OFFLINE ORDERS (Stored in orderModel)
             // =========================================================================
             const offlineOrders = await orderModel.find({ razorpayOrderId: targetOrderId, status: 'Pending' });
 

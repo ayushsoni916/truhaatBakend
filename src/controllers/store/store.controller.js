@@ -4,6 +4,16 @@ const couponModel = require('../../models/store/coupon.model');
 const Order = require('../../models/store/order.model');
 const productModel = require('../../models/store/product.model');
 
+const Razorpay = require('razorpay');
+const crypto = require('crypto');
+
+const razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET
+});
+
+const round2 = value => Number(Number(value).toFixed(2));
+
 // Helper: Calculate Cart Totals
 const calculateCartTotals = async (cartItems, couponCode) => {
     let subtotal = 0;
@@ -17,8 +27,48 @@ const calculateCartTotals = async (cartItems, couponCode) => {
         if (!product) continue;
 
         // NEW: Use basePrice and salePrice from the new schema
-        const price = product.salePrice || product.basePrice;
-        const itemTotal = price * item.quantity;
+        // const price = product.salePrice || product.basePrice;
+        // const itemTotal = price * item.quantity;
+
+        // subtotal += itemTotal;
+        const hasSalePrice =
+            product.salePrice !== null &&
+            product.salePrice !== undefined &&
+            Number(product.salePrice) > 0 &&
+            Number(product.salePrice) < Number(product.basePrice);
+
+        const priceBeforeGst = hasSalePrice
+            ? Number(product.salePrice)
+            : Number(product.basePrice);
+
+        const gstPercentage = Number(product.gstPercentage || 0);
+
+        const finalPrice = Number(
+            (
+                priceBeforeGst *
+                (1 + gstPercentage / 100)
+            ).toFixed(2)
+        );
+
+        const originalFinalPrice = Number(
+            (
+                Number(product.basePrice) *
+                (1 + gstPercentage / 100)
+            ).toFixed(2)
+        );
+
+        const discountPercentage = hasSalePrice
+            ? Math.round(
+                (
+                    (product.basePrice - product.salePrice) /
+                    product.basePrice
+                ) * 100
+            )
+            : 0;
+
+        const itemTotal = Number(
+            (finalPrice * item.quantity).toFixed(2)
+        );
 
         subtotal += itemTotal;
 
@@ -34,14 +84,20 @@ const calculateCartTotals = async (cartItems, couponCode) => {
         itemsFormatted.push({
             product: product._id,
             name: product.name,
-            // NEW: Handle the object image schema
             image: product.mainImage?.url || product.mainImage,
-            price: price,
-            originalPrice: product.basePrice,
+
+            price: finalPrice,
+            originalPrice: originalFinalPrice,
+
+            finalPrice,
+            originalFinalPrice,
+            discountPercentage,
+
             quantity: item.quantity,
             size: item.size,
-            maxStock: maxStock, // Send maxStock to frontend for validation
-            itemTotal: itemTotal,
+            maxStock,
+            itemTotal,
+
             hasVariants: product.hasVariants,
             variants: product.variants || []
         });
@@ -69,7 +125,10 @@ const calculateCartTotals = async (cartItems, couponCode) => {
     }
 
     const shipping = subtotal > 500 ? 0 : 40;
-    const finalAmount = subtotal - discount + shipping;
+    // const finalAmount = subtotal - discount + shipping;
+    const finalAmount = Number(
+        (subtotal - discount + shipping).toFixed(2)
+    );
 
     return {
         items: itemsFormatted,
@@ -79,6 +138,50 @@ const calculateCartTotals = async (cartItems, couponCode) => {
         finalAmount,
         couponDetails
     };
+};
+
+const returnExistingCheckout = (res, order) => {
+    if (order.paymentStatus === 'PAID') {
+        return res.status(200).json({
+            success: true,
+            alreadyPaid: true,
+            data: {
+                localOrderId: order._id,
+                orderId: order.orderId,
+                paymentStatus: order.paymentStatus,
+                orderStatus: order.orderStatus
+            }
+        });
+    }
+
+    if (order.paymentStatus === 'FAILED') {
+        return res.status(409).json({
+            success: false,
+            message: 'Previous checkout failed. Start a new checkout.'
+        });
+    }
+
+    // Another identical request is currently creating the Razorpay order.
+    if (!order.razorpayOrderId) {
+        return res.status(202).json({
+            success: false,
+            processing: true,
+            message: 'Checkout is being initialized. Please retry.'
+        });
+    }
+
+    return res.status(200).json({
+        success: true,
+        reused: true,
+        data: {
+            localOrderId: order._id,
+            orderId: order.orderId,
+            razorpayOrderId: order.razorpayOrderId,
+            amount: Math.round(order.finalAmount * 100),
+            currency: 'INR',
+            key: process.env.RAZORPAY_KEY_ID
+        }
+    });
 };
 
 // ==========================================
@@ -509,6 +612,388 @@ exports.placeOrder = async (req, res, next) => {
     }
 };
 
+exports.createOnlineOrder = async (req, res, next) => {
+    try {
+        const userId = req.user.id;
+        const { addressId, checkoutId } = req.body;
+
+        if (!addressId || !checkoutId?.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'addressId and checkoutId are required'
+            });
+        }
+
+        const safeCheckoutId = checkoutId.trim();
+
+        // Idempotency: retry returns the same checkout.
+        const existingOrder = await Order.findOne({
+            user: userId,
+            checkoutId: safeCheckoutId
+        });
+
+        if (existingOrder) {
+            return returnExistingCheckout(res, existingOrder);
+        }
+
+        const [cart, address] = await Promise.all([
+            cartModel
+                .findOne({ user: userId })
+                .populate('items.product'),
+
+            addressModel.findOne({
+                _id: addressId,
+                user: userId
+            })
+        ]);
+
+        if (!cart || cart.items.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Cart is empty'
+            });
+        }
+
+        if (!address) {
+            return res.status(404).json({
+                success: false,
+                message: 'Address not found'
+            });
+        }
+
+        const stateCode = String(address.stateCode || '').trim();
+
+        if (!/^\d{2}$/.test(stateCode)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Valid address state code is required'
+            });
+        }
+
+        const isRajasthan = stateCode === '08';
+
+        // Validate product availability and stock again.
+        for (const cartItem of cart.items) {
+            const product = cartItem.product;
+            const quantity = Number(cartItem.quantity);
+
+            if (!product || !product.isActive || !product.inStock) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'One or more products are unavailable'
+                });
+            }
+
+            if (!Number.isInteger(quantity) || quantity < 1) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Invalid quantity for ${product.name}`
+                });
+            }
+
+            if (product.hasVariants) {
+                const variant = product.variants.find(
+                    variantItem =>
+                        String(variantItem.size) === String(cartItem.size)
+                );
+
+                if (!variant || Number(variant.stock) < quantity) {
+                    return res.status(400).json({
+                        success: false,
+                        message: `Insufficient stock for ${product.name}`
+                    });
+                }
+            } else if (Number(product.totalStock || 0) < quantity) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Insufficient stock for ${product.name}`
+                });
+            }
+        }
+
+        // Use the same calculation as the cart screen.
+        const calculation = await calculateCartTotals(
+            cart.items,
+            cart.couponCode
+        );
+
+        if (cart.couponCode && !calculation.couponDetails) {
+            return res.status(400).json({
+                success: false,
+                message: 'Coupon is no longer valid. Refresh the cart.'
+            });
+        }
+
+        const subtotal = round2(calculation.subtotal);
+        const discount = round2(calculation.discount);
+        const shippingFee = round2(calculation.shipping);
+        const handlingFee = 0;
+        const finalAmount = round2(calculation.finalAmount);
+
+        /*
+         * Allocate the coupon discount proportionately between products.
+         * This gives the correct taxable value and GST after discount.
+         */
+        let allocatedDiscount = 0;
+
+        const orderItems = cart.items.map((cartItem, index) => {
+            const product = cartItem.product;
+            const quantity = Number(cartItem.quantity);
+
+            const basePrice = Number(product.basePrice);
+            const salePrice = Number(product.salePrice);
+
+            const hasSalePrice =
+                Number.isFinite(salePrice) &&
+                salePrice > 0 &&
+                salePrice < basePrice;
+
+            // GST-exclusive selling price per unit.
+            const priceBeforeGst = hasSalePrice
+                ? salePrice
+                : basePrice;
+
+            const gstPercentage = Number(
+                product.gstPercentage || 0
+            );
+
+            const finalUnitPrice = round2(
+                priceBeforeGst * (1 + gstPercentage / 100)
+            );
+
+            const grossLineTotal = round2(
+                finalUnitPrice * quantity
+            );
+
+            const isLastItem =
+                index === cart.items.length - 1;
+
+            const lineDiscount = discount === 0
+                ? 0
+                : isLastItem
+                    ? round2(discount - allocatedDiscount)
+                    : round2(
+                        discount *
+                        (grossLineTotal / subtotal)
+                    );
+
+            allocatedDiscount = round2(
+                allocatedDiscount + lineDiscount
+            );
+
+            const totalAmount = round2(
+                grossLineTotal - lineDiscount
+            );
+
+            const taxableValue = round2(
+                totalAmount /
+                (1 + gstPercentage / 100)
+            );
+
+            const gstAmount = round2(
+                totalAmount - taxableValue
+            );
+
+            let cgstRate = 0;
+            let sgstRate = 0;
+            let igstRate = 0;
+
+            let cgstAmount = 0;
+            let sgstAmount = 0;
+            let igstAmount = 0;
+
+            if (isRajasthan) {
+                cgstRate = gstPercentage / 2;
+                sgstRate = gstPercentage / 2;
+
+                cgstAmount = round2(gstAmount / 2);
+                sgstAmount = round2(
+                    gstAmount - cgstAmount
+                );
+            } else {
+                igstRate = gstPercentage;
+                igstAmount = gstAmount;
+            }
+
+            return {
+                product: product._id,
+                name: product.name,
+                image:
+                    product.mainImage?.url ||
+                    product.mainImage ||
+                    '',
+                quantity,
+                size: cartItem.size || null,
+
+                hsnCode: product.hsnCode,
+                gstPercentage,
+
+                price: priceBeforeGst,
+                taxableValue,
+                gstAmount,
+
+                cgst: {
+                    rate: cgstRate,
+                    amount: cgstAmount
+                },
+
+                sgst: {
+                    rate: sgstRate,
+                    amount: sgstAmount
+                },
+
+                igst: {
+                    rate: igstRate,
+                    amount: igstAmount
+                },
+
+                totalAmount
+            };
+        });
+
+        const taxTotals = orderItems.reduce(
+            (totals, item) => {
+                totals.taxableValue += item.taxableValue;
+                totals.cgst += item.cgst.amount;
+                totals.sgst += item.sgst.amount;
+                totals.igst += item.igst.amount;
+                totals.gstTotal += item.gstAmount;
+
+                return totals;
+            },
+            {
+                taxableValue: 0,
+                cgst: 0,
+                sgst: 0,
+                igst: 0,
+                gstTotal: 0
+            }
+        );
+
+        Object.keys(taxTotals).forEach(key => {
+            taxTotals[key] = round2(taxTotals[key]);
+        });
+
+        const orderId =
+            `ORD-${Date.now()}-${crypto
+                .randomBytes(3)
+                .toString('hex')
+                .toUpperCase()}`;
+
+        let pendingOrder;
+
+        try {
+            /*
+             * Create the pending local order first.
+             * The unique checkoutId protects concurrent requests.
+             */
+            pendingOrder = await Order.create({
+                orderId,
+                checkoutId: safeCheckoutId,
+                user: userId,
+                items: orderItems,
+                shippingAddress: address.toObject(),
+
+                paymentMode: 'ONLINE',
+                paymentStatus: 'PENDING',
+                orderStatus: 'PAYMENT_PENDING',
+
+                subtotal,
+                taxableValue: taxTotals.taxableValue,
+                discount,
+                cgst: taxTotals.cgst,
+                sgst: taxTotals.sgst,
+                igst: taxTotals.igst,
+                gstTotal: taxTotals.gstTotal,
+                shippingFee,
+                handlingFee,
+                finalAmount,
+
+                couponApplied:
+                    calculation.couponDetails?.code || null
+            });
+        } catch (error) {
+            /*
+             * Two identical requests may pass the first lookup together.
+             * The unique database index allows only one insertion.
+             */
+            if (error.code === 11000) {
+                const duplicateOrder = await Order.findOne({
+                    user: userId,
+                    checkoutId: safeCheckoutId
+                });
+
+                if (duplicateOrder) {
+                    return returnExistingCheckout(
+                        res,
+                        duplicateOrder
+                    );
+                }
+            }
+
+            throw error;
+        }
+
+        try {
+            const razorpayOrder =
+                await razorpay.orders.create({
+                    // amount: Math.round(finalAmount * 100),
+                    amount: Math.round(1 * 100),
+                    currency: 'INR',
+                    receipt: orderId,
+                    notes: {
+                        purpose: 'ONLINE_ECOMMERCE',
+                        localOrderId:
+                            pendingOrder._id.toString()
+                    }
+                });
+
+            pendingOrder.razorpayOrderId =
+                razorpayOrder.id;
+
+            await pendingOrder.save();
+
+            return res.status(201).json({
+                success: true,
+                message: 'Payment order created',
+                data: {
+                    localOrderId: pendingOrder._id,
+                    orderId: pendingOrder.orderId,
+                    razorpayOrderId: razorpayOrder.id,
+                    amount: razorpayOrder.amount,
+                    currency: razorpayOrder.currency,
+                    key: process.env.RAZORPAY_KEY_ID
+                }
+            });
+        } catch (error) {
+            await Order.updateOne(
+                {
+                    _id: pendingOrder._id,
+                    paymentStatus: 'PENDING'
+                },
+                {
+                    $set: {
+                        paymentStatus: 'FAILED',
+                        orderStatus: 'CANCELLED'
+                    }
+                }
+            );
+
+            console.error(
+                'Razorpay order creation failed:',
+                error
+            );
+
+            return res.status(500).json({
+                success: false,
+                message: 'Unable to initialize payment'
+            });
+        }
+    } catch (error) {
+        next(error);
+    }
+};
+
 // --- 1. Get List of All Orders for a User ---
 exports.getUserOrders = async (req, res, next) => {
     try {
@@ -555,7 +1040,7 @@ exports.getOrderDetails = async (req, res, next) => {
                 orderInfo: {
                     id: order.orderId,
                     date: order.createdAt,
-                    status: order.status || "Pending",
+                    status: order.orderStatus,
                     paymentMode: order.paymentMode,
                     paymentStatus: order.paymentStatus
                 },
@@ -587,7 +1072,7 @@ exports.addAddress = async (req, res, next) => {
         const {
             firstName, lastName, phone,
             addressLine1, addressLine2,
-            area, city, state, pincode,
+            area, city, state, stateCode, pincode,
             addressType, isDefault
         } = req.body;
 
@@ -609,6 +1094,7 @@ exports.addAddress = async (req, res, next) => {
             area,
             city,
             state,
+            stateCode,
             pincode,
             addressType,
             isDefault: isDefault || false

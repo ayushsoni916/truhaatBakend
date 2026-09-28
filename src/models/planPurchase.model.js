@@ -48,7 +48,13 @@ const planPurchaseSchema = new mongoose.Schema({
     },
     deliveryStatus: {
         type: String,
-        enum: ['PENDING', 'DISPATCHED', 'DELIVERED'],
+        enum: [
+            'PENDING',
+            'PROCESSING',
+            'SHIPPED',
+            'DELIVERED',
+            'CANCELLED'
+        ],
         default: 'PENDING'
     },
     trackingDetails: {

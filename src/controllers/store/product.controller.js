@@ -5,7 +5,7 @@ const cloudinary = require("cloudinary").v2;
 // 1. Add Product
 exports.addProduct = async (req, res, next) => {
     try {
-        const files = req.files; 
+        const files = req.files;
         if (!files || files.length === 0) {
             return res.status(400).json({ error: "At least one product image is required" });
         }
@@ -62,12 +62,25 @@ exports.addProduct = async (req, res, next) => {
 // 2. Get All Products (Admin)
 exports.getProducts = async (req, res, next) => {
     try {
-        const { categoryId,subCategoryId ,search, page = 1, limit = 10 } = req.query;
-        let query = {}; 
+        const {
+            categoryId,
+            subCategoryId,
+            search,
+            page = 1,
+            limit = 10
+        } = req.query;
+
+        const query = {};
 
         if (categoryId) query.category = categoryId;
         if (subCategoryId) query.subCategory = subCategoryId;
-        if (search) query.name = { $regex: search, $options: 'i' };
+
+        if (search) {
+            query.name = {
+                $regex: search,
+                $options: 'i'
+            };
+        }
 
         const skip = (parseInt(page) - 1) * parseInt(limit);
 
@@ -77,13 +90,52 @@ exports.getProducts = async (req, res, next) => {
             .populate('tags', 'name')
             .sort({ createdAt: -1 })
             .skip(skip)
-            .limit(parseInt(limit));
+            .limit(parseInt(limit))
+            .lean();
+
+        const formattedProducts = products.map(product => {
+            const hasSalePrice =
+                product.salePrice !== null &&
+                product.salePrice !== undefined &&
+                Number(product.salePrice) > 0 &&
+                Number(product.salePrice) < Number(product.basePrice);
+
+            const sellingPrice = hasSalePrice
+                ? Number(product.salePrice)
+                : Number(product.basePrice);
+
+            const gstPercentage = Number(
+                product.gstPercentage || 0
+            );
+
+            const finalPrice = Number(
+                (
+                    sellingPrice *
+                    (1 + gstPercentage / 100)
+                ).toFixed(2)
+            );
+
+            const discountPercentage = hasSalePrice
+                ? Math.round(
+                    (
+                        (product.basePrice - product.salePrice) /
+                        product.basePrice
+                    ) * 100
+                )
+                : 0;
+
+            return {
+                ...product,
+                finalPrice,
+                discountPercentage
+            };
+        });
 
         const total = await productModel.countDocuments(query);
 
         res.status(200).json({
             success: true,
-            data: products,
+            data: formattedProducts,
             pagination: {
                 total,
                 page: parseInt(page),
@@ -98,10 +150,63 @@ exports.getProducts = async (req, res, next) => {
 // 3. Get Single Product
 exports.getProductById = async (req, res, next) => {
     try {
-        const product = await productModel.findById(req.params.id).populate('category', 'name');
-        if (!product) return res.status(404).json({ error: 'Product not found' });
+        const product = await productModel
+            .findById(req.params.id)
+            .populate('category', 'name')
+            .lean();
 
-        res.status(200).json({ success: true, data: product });
+        if (!product) {
+            return res.status(404).json({
+                error: 'Product not found'
+            });
+        }
+
+        const hasSalePrice =
+            product.salePrice !== null &&
+            product.salePrice !== undefined &&
+            Number(product.salePrice) > 0 &&
+            Number(product.salePrice) < Number(product.basePrice);
+
+        const sellingPrice = hasSalePrice
+            ? Number(product.salePrice)
+            : Number(product.basePrice);
+
+        const gstPercentage = Number(
+            product.gstPercentage || 0
+        );
+
+        const finalPrice = Number(
+            (
+                sellingPrice *
+                (1 + gstPercentage / 100)
+            ).toFixed(2)
+        );
+
+        const originalFinalPrice = Number(
+            (
+                Number(product.basePrice) *
+                (1 + gstPercentage / 100)
+            ).toFixed(2)
+        );
+
+        const discountPercentage = hasSalePrice
+            ? Math.round(
+                (
+                    (product.basePrice - product.salePrice) /
+                    product.basePrice
+                ) * 100
+            )
+            : 0;
+
+        res.status(200).json({
+            success: true,
+            data: {
+                ...product,
+                finalPrice,
+                originalFinalPrice,
+                discountPercentage
+            }
+        });
     } catch (error) {
         next(error);
     }
@@ -195,7 +300,7 @@ exports.updateProduct = async (req, res, next) => {
 
         if (req.body.hasVariants !== undefined) product.hasVariants = req.body.hasVariants === 'true';
         if (req.body.totalStock !== undefined) product.totalStock = req.body.totalStock;
-        
+
         // This easily handles the new nested specifications inside variants
         if (req.body.variants) product.variants = JSON.parse(req.body.variants);
 
@@ -222,7 +327,7 @@ exports.getHomeFeed = async (req, res, next) => {
             categories.map(async (cat) => {
                 // We only .select() the fields the UI actually needs, saving massive bandwidth
                 const products = await productModel.find({ category: cat._id, isActive: true })
-                    .select('name basePrice salePrice mainImage category')
+                    .select('name basePrice salePrice gstPercentage mainImage category')
                     .limit(5)
                     .lean();
 
@@ -230,17 +335,47 @@ exports.getHomeFeed = async (req, res, next) => {
                     categoryId: cat._id,
                     categoryName: cat.name,
                     // Calculate discount percentage on the backend
-                    products: products.map(p => ({
-                        _id: p._id,
-                        name: p.name,
-                        price: p.basePrice,
-                        salePrice: p.salePrice,
-                        mainImage: p.mainImage?.url,
-                        category: p.category,
-                        discountPercentage: p.basePrice > 0 && p.salePrice 
-                            ? Math.round(((p.basePrice - p.salePrice) / p.basePrice) * 100) 
-                            : 0
-                    }))
+                    products: products.map(p => {
+                        const hasSalePrice =
+                            p.salePrice !== null &&
+                            p.salePrice !== undefined &&
+                            Number(p.salePrice) < Number(p.basePrice);
+
+                        const taxablePrice = hasSalePrice
+                            ? Number(p.salePrice)
+                            : Number(p.basePrice);
+
+                        const gstPercentage = Number(p.gstPercentage || 0);
+
+                        const finalPrice = Number(
+                            (taxablePrice * (1 + gstPercentage / 100)).toFixed(2)
+                        );
+
+                        const originalFinalPrice = Number(
+                            (Number(p.basePrice) * (1 + gstPercentage / 100)).toFixed(2)
+                        );
+
+                        return {
+                            _id: p._id,
+                            name: p.name,
+
+                            basePrice: p.basePrice,
+                            salePrice: p.salePrice,
+                            gstPercentage,
+
+                            finalPrice,
+                            originalFinalPrice,
+
+                            mainImage: p.mainImage?.url,
+                            category: p.category,
+
+                            discountPercentage: hasSalePrice
+                                ? Math.round(
+                                    ((p.basePrice - p.salePrice) / p.basePrice) * 100
+                                )
+                                : 0
+                        };
+                    })
                 };
             })
         );

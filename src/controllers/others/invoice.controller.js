@@ -97,9 +97,13 @@ const getPlanInvoice = async (req, res) => {
         // 1. Determine Tax Type (IGST vs CGST/SGST)
         const COMPANY_STATE_CODE = '08'; // Rajasthan
 
-        const customerStateCode = String(
+        const rawStateCode = String(
             purchase.shippingAddress?.stateCode || ''
-        ).padStart(2, '0');
+        ).trim();
+
+        const customerStateCode = /^\d{2}$/.test(rawStateCode)
+            ? rawStateCode
+            : null;
 
         const isRajasthan = customerStateCode === COMPANY_STATE_CODE;
 
@@ -170,7 +174,20 @@ const getPlanInvoice = async (req, res) => {
                 date: new Date(purchase.paidAt || purchase.createdAt).toLocaleDateString('en-GB').replace(/\//g, '-'), // DD-MM-YYYY
                 paymentTerms: "ONLINE", paymentRef: purchase.razorpayPaymentId || 'N/A',
                 // courierName: "DELHIVERY",
-                trackingDetails: "Pending" // Update these if you have a shipping model
+                deliveryMethod:
+                    purchase.deliveryMethod === 'BY_HAND'
+                        ? 'BY HAND'
+                        : 'COURIER',
+
+                courierName:
+                    purchase.deliveryMethod === 'BY_HAND'
+                        ? 'N/A'
+                        : purchase.trackingDetails?.courierPartner || 'Pending',
+
+                trackingDetails:
+                    purchase.deliveryMethod === 'BY_HAND'
+                        ? 'N/A'
+                        : purchase.trackingDetails?.trackingId || 'Pending'
             },
             items: invoiceLines,
             totals: totals

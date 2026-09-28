@@ -41,8 +41,18 @@ const generateInvoicePDF = (data, res) => {
         .text(`Order No: ${data.invoiceDetails.orderNo || 'N/A'}`)
         .text(`Date: ${data.invoiceDetails.date}`)
         .text(`Payment: ${paymentStr}`)
-        .text(`Courier: ${data.invoiceDetails.courierName || 'N/A'}`)
-        .text(`Tracking: ${data.invoiceDetails.trackingDetails || 'N/A'}`);
+        .text(
+            `Delivery Method: ${data.invoiceDetails.deliveryMethod || 'COURIER'
+            }`
+        )
+        .text(
+            `Courier: ${data.invoiceDetails.courierName || 'N/A'
+            }`
+        )
+        .text(
+            `Tracking: ${data.invoiceDetails.trackingDetails || 'N/A'
+            }`
+        );
 
     // --- 3. MAIN TABLE HEADER ---
     doc.moveDown(2);
@@ -56,6 +66,8 @@ const generateInvoicePDF = (data, res) => {
         discP: 265, discA: 300, taxable: 340, cgst: 390, sgst: 440, total: 490
     };
 
+    const isIGSTInvoice = Number(data.totals.igst || 0) > 0;
+
     doc.text('Sl', cols.sno, tableTop + 5);
     doc.text('Description', cols.desc, tableTop + 5);
     doc.text('HSN', cols.hsn, tableTop + 5);
@@ -65,8 +77,17 @@ const generateInvoicePDF = (data, res) => {
     doc.text('Disc %', cols.discP, tableTop + 5);
     doc.text('Disc Amt', cols.discA, tableTop + 5);
     doc.text('Taxable', cols.taxable, tableTop + 5);
-    doc.text('CGST(%)', cols.cgst, tableTop + 5);
-    doc.text('SGST(%)', cols.sgst, tableTop + 5);
+    doc.text(
+        isIGSTInvoice ? 'IGST(%)' : 'CGST(%)',
+        cols.cgst,
+        tableTop + 5
+    );
+
+    doc.text(
+        isIGSTInvoice ? '' : 'SGST(%)',
+        cols.sgst,
+        tableTop + 5
+    );
     doc.text('Total', cols.total, tableTop + 5);
 
     // --- 4. MAIN TABLE ROWS ---
@@ -86,12 +107,24 @@ const generateInvoicePDF = (data, res) => {
         doc.text((item.discAmount || 0).toFixed(2), cols.discA, rowY);
         doc.text(item.taxableValue.toFixed(2), cols.taxable, rowY);
 
-        if (item.igst && item.igst.rate > 0) {
-            doc.text(`-`, cols.cgst, rowY);
-            doc.text(`IGST ${item.igst.rate}%\n${item.igst.amount.toFixed(2)}`, cols.sgst, rowY);
+        if (isIGSTInvoice) {
+            doc.text(
+                `${item.igst.rate}%\n${item.igst.amount.toFixed(2)}`,
+                cols.cgst,
+                rowY
+            );
         } else {
-            doc.text(`${item.cgst.rate}% \n${item.cgst.amount.toFixed(2)}`, cols.cgst, rowY);
-            doc.text(`${item.sgst.rate}% \n${item.sgst.amount.toFixed(2)}`, cols.sgst, rowY);
+            doc.text(
+                `${item.cgst.rate}%\n${item.cgst.amount.toFixed(2)}`,
+                cols.cgst,
+                rowY
+            );
+
+            doc.text(
+                `${item.sgst.rate}%\n${item.sgst.amount.toFixed(2)}`,
+                cols.sgst,
+                rowY
+            );
         }
 
         doc.text(item.totalAmount.toFixed(2), cols.total, rowY);
@@ -108,8 +141,25 @@ const generateInvoicePDF = (data, res) => {
     // FIX: Moved 'Grand Total' left to cols.rate (230) to prevent the overlap issue!
     doc.text('Grand Total:', cols.rate, rowY);
     doc.text(`Rs. ${data.totals.taxableValue.toFixed(2)}`, cols.taxable, rowY);
-    doc.text(`Rs. ${data.totals.cgst.toFixed(2)}`, cols.cgst, rowY);
-    doc.text(`Rs. ${data.totals.sgst.toFixed(2)}`, cols.sgst, rowY);
+    if (isIGSTInvoice) {
+        doc.text(
+            `Rs. ${Number(data.totals.igst || 0).toFixed(2)}`,
+            cols.cgst,
+            rowY
+        );
+    } else {
+        doc.text(
+            `Rs. ${Number(data.totals.cgst || 0).toFixed(2)}`,
+            cols.cgst,
+            rowY
+        );
+
+        doc.text(
+            `Rs. ${Number(data.totals.sgst || 0).toFixed(2)}`,
+            cols.sgst,
+            rowY
+        );
+    }
     doc.text(`Rs. ${data.totals.grandTotal.toFixed(2)}`, cols.total, rowY);
 
     // --- 6. HSN SUMMARY TABLE ---

@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../../middleware/auth.middleware');
-const { placeOrder, getCart, addToCart, applyCoupon, getAddresses, addAddress, removeCartItem, getDefaultAddress, updateCartItem, createCoupon, getCoupons, getUserOrders, getOrderDetails, getAllCouponsAdmin, deleteCoupon, toggleCouponStatus, getAllOrdersAdmin, updateOrderStatusAdmin } = require('../../controllers/store/store.controller');
+const { placeOrder, getCart, addToCart, applyCoupon, getAddresses, addAddress, removeCartItem, getDefaultAddress, updateCartItem, createCoupon, getCoupons, getUserOrders, getOrderDetails, getAllCouponsAdmin, deleteCoupon, toggleCouponStatus, getAllOrdersAdmin, updateOrderStatusAdmin, createOnlineOrder } = require('../../controllers/store/store.controller');
 const cartRouter = express.Router();
 
 // Import Controller Functions
@@ -61,6 +61,12 @@ cartRouter.put('/admin/coupon/toggle/:id', toggleCouponStatus);
 
 // POST /api/store/order/place - Final Checkout
 cartRouter.post('/order/place', requireAuth, placeOrder);
+
+cartRouter.post(
+    '/order/create-online-order',
+    requireAuth,
+    createOnlineOrder
+);
 
 // GET /api/store/order/my-orders - List all orders for a user
 cartRouter.get('/order/my-orders', requireAuth, getUserOrders);

@@ -208,11 +208,13 @@ const getUsersAdmin = async (req, res, next) => {
 
         // 4. Attach PlanPurchase & filter by status if specified
         const PlanPurchase = require('../models/planPurchase.model');
-        
+
         let processedUsers = await Promise.all(users.map(async (user) => {
             const purchase = await PlanPurchase.findOne({ user: user._id })
                 .sort({ createdAt: -1 })
-                .select('deliveryStatus invoiceNumber shippingAddress');
+                .select(
+                    'deliveryStatus deliveryMethod invoiceNumber shippingAddress trackingDetails'
+                );
             return { ...user, planPurchase: purchase };
         }));
 

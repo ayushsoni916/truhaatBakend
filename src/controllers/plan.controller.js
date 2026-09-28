@@ -389,17 +389,95 @@ const processCashbackCardActivation = async (userId, razorpayOrderId, razorpayPa
 
 const updatePlanDeliveryStatus = async (req, res) => {
     try {
-        const { purchaseId, status } = req.body;
-
-        const updatedPurchase = await PlanPurchase.findByIdAndUpdate(
+        const {
             purchaseId,
-            { deliveryStatus: status },
-            { new: true }
-        );
+            status,
+            deliveryMethod
+        } = req.body;
 
-        res.status(200).json({ success: true, data: updatedPurchase });
+        if (!purchaseId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Purchase ID is required'
+            });
+        }
+
+        const updateData = {};
+
+        if (status) {
+            const allowedStatuses = [
+                'PENDING',
+                'PROCESSING',
+                'SHIPPED',
+                'DELIVERED',
+                'CANCELLED'
+            ];
+
+            if (!allowedStatuses.includes(status)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Invalid delivery status'
+                });
+            }
+
+            updateData.deliveryStatus = status;
+        }
+
+        if (deliveryMethod) {
+            const allowedMethods = ['COURIER', 'BY_HAND'];
+
+            if (!allowedMethods.includes(deliveryMethod)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Invalid delivery method'
+                });
+            }
+
+            updateData.deliveryMethod = deliveryMethod;
+
+            if (deliveryMethod === 'BY_HAND') {
+                updateData.trackingDetails = {
+                    courierPartner: '',
+                    trackingId: ''
+                };
+            }
+        }
+
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'No update value provided'
+            });
+        }
+
+        const updatedPurchase =
+            await PlanPurchase.findByIdAndUpdate(
+                purchaseId,
+                { $set: updateData },
+                {
+                    new: true,
+                    runValidators: true
+                }
+            );
+
+        if (!updatedPurchase) {
+            return res.status(404).json({
+                success: false,
+                error: 'Plan purchase not found'
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: updatedPurchase
+        });
     } catch (error) {
-        res.status(500).json({ success: false, error: 'Failed to update delivery status' });
+        console.error('Delivery update error:', error);
+
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to update delivery details'
+        });
     }
 };
 
