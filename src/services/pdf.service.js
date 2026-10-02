@@ -66,7 +66,13 @@ const generateInvoicePDF = (data, res) => {
         discP: 265, discA: 300, taxable: 340, cgst: 390, sgst: 440, total: 490
     };
 
-    const isIGSTInvoice = Number(data.totals.igst || 0) > 0;
+    const isIGSTInvoice =
+        data.taxType === 'IGST' ||
+        data.items.some(
+            item =>
+                Number(item.igst?.rate || 0) > 0 ||
+                Number(item.igst?.amount || 0) > 0
+        );
 
     doc.text('Sl', cols.sno, tableTop + 5);
     doc.text('Description', cols.desc, tableTop + 5);
@@ -133,37 +139,102 @@ const generateInvoicePDF = (data, res) => {
     });
 
     // --- 5. FOOTER & TOTALS ---
-    doc.moveTo(30, rowY).lineTo(565, rowY).stroke('#000000');
-    rowY += 5;
+    doc.moveTo(30, rowY)
+        .lineTo(565, rowY)
+        .stroke('#000000');
+
+    rowY += 7;
 
     doc.font('Helvetica-Bold').fontSize(8);
 
-    // FIX: Moved 'Grand Total' left to cols.rate (230) to prevent the overlap issue!
+    const shippingFee = Number(
+        data.totals.shippingFee || 0
+    );
+
+    const handlingFee = Number(
+        data.totals.handlingFee || 0
+    );
+
+    if (shippingFee > 0) {
+        doc.text('Shipping:', cols.rate, rowY);
+
+        doc.text(
+            `Rs. ${shippingFee.toFixed(2)}`,
+            cols.total,
+            rowY
+        );
+
+        rowY += 14;
+    }
+
+    if (handlingFee > 0) {
+        doc.text('Handling:', cols.rate, rowY);
+
+        doc.text(
+            `Rs. ${handlingFee.toFixed(2)}`,
+            cols.total,
+            rowY
+        );
+
+        rowY += 14;
+    }
+
+    // Separator before final totals
+    if (shippingFee > 0 || handlingFee > 0) {
+        doc.moveTo(225, rowY)
+            .lineTo(565, rowY)
+            .stroke('#e0e0e0');
+
+        rowY += 7;
+    }
+
     doc.text('Grand Total:', cols.rate, rowY);
-    doc.text(`Rs. ${data.totals.taxableValue.toFixed(2)}`, cols.taxable, rowY);
+
+    doc.text(
+        `Rs. ${Number(
+            data.totals.taxableValue || 0
+        ).toFixed(2)}`,
+        cols.taxable,
+        rowY
+    );
+
     if (isIGSTInvoice) {
         doc.text(
-            `Rs. ${Number(data.totals.igst || 0).toFixed(2)}`,
+            `Rs. ${Number(
+                data.totals.igst || 0
+            ).toFixed(2)}`,
             cols.cgst,
             rowY
         );
     } else {
         doc.text(
-            `Rs. ${Number(data.totals.cgst || 0).toFixed(2)}`,
+            `Rs. ${Number(
+                data.totals.cgst || 0
+            ).toFixed(2)}`,
             cols.cgst,
             rowY
         );
 
         doc.text(
-            `Rs. ${Number(data.totals.sgst || 0).toFixed(2)}`,
+            `Rs. ${Number(
+                data.totals.sgst || 0
+            ).toFixed(2)}`,
             cols.sgst,
             rowY
         );
     }
-    doc.text(`Rs. ${data.totals.grandTotal.toFixed(2)}`, cols.total, rowY);
 
+    doc.text(
+        `Rs. ${Number(
+            data.totals.grandTotal || 0
+        ).toFixed(2)}`,
+        cols.total,
+        rowY
+    );
+
+    rowY += 15;
     // --- 6. HSN SUMMARY TABLE ---
-    doc.moveDown(3);
+    doc.y = rowY + 20;
     const summaryTop = doc.y;
     doc.fontSize(10).font('Helvetica-Bold').text('HSN Summary', 30, summaryTop);
 
@@ -211,8 +282,37 @@ const generateInvoicePDF = (data, res) => {
 
     // --- 7. AMOUNT IN WORDS & SIGNATURE ---
     doc.y = sumRowY + 15;
-    const amountInWords = converter.toWords(data.totals.grandTotal).toUpperCase();
-    doc.font('Helvetica-Oblique').text(`Amount Chargeable (in words): INR ${amountInWords} ONLY`, 30, doc.y);
+    const grandTotal = Number(
+        data.totals.grandTotal || 0
+    );
+
+    const totalPaise = Math.round(
+        grandTotal * 100
+    );
+
+    const rupees = Math.floor(
+        totalPaise / 100
+    );
+
+    const paise = totalPaise % 100;
+
+    let amountInWords =
+        `INR ${converter
+            .toWords(rupees)
+            .toUpperCase()}`;
+
+    if (paise > 0) {
+        amountInWords +=
+            ` AND ${converter
+                .toWords(paise)
+                .toUpperCase()} PAISE`;
+    }
+
+    doc.font('Helvetica-Oblique').text(
+        `Amount Chargeable (in words): ${amountInWords} ONLY`,
+        30,
+        doc.y
+    );
 
     doc.moveDown(2);
     doc.font('Helvetica').fontSize(8).text('Declaration: We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.', 30, doc.y, { width: 300 });

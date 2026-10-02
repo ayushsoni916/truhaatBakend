@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../../middleware/auth.middleware');
-const { placeOrder, getCart, addToCart, applyCoupon, getAddresses, addAddress, removeCartItem, getDefaultAddress, updateCartItem, createCoupon, getCoupons, getUserOrders, getOrderDetails, getAllCouponsAdmin, deleteCoupon, toggleCouponStatus, getAllOrdersAdmin, updateOrderStatusAdmin, createOnlineOrder } = require('../../controllers/store/store.controller');
+const { placeOrder, getCart, addToCart, applyCoupon, getAddresses, addAddress, removeCartItem, getDefaultAddress, updateCartItem, createCoupon, getCoupons, getUserOrders, getOrderDetails, getAllCouponsAdmin, deleteCoupon, toggleCouponStatus, getAllOrdersAdmin, updateOrderStatusAdmin, createOnlineOrder, downloadOnlineOrderInvoice, getOnlinePaymentHistoryAdmin, exportOnlinePaymentHistoryAdmin } = require('../../controllers/store/store.controller');
 const cartRouter = express.Router();
 
 // Import Controller Functions
@@ -71,6 +71,11 @@ cartRouter.post(
 // GET /api/store/order/my-orders - List all orders for a user
 cartRouter.get('/order/my-orders', requireAuth, getUserOrders);
 
+cartRouter.get(
+    '/order/:orderId/invoice',
+    downloadOnlineOrderInvoice
+);
+
 // GET /api/store/order/:orderId - View specific order details
 cartRouter.get('/order/:orderId', requireAuth, getOrderDetails);
 
@@ -79,5 +84,15 @@ cartRouter.get('/admin/order/all', getAllOrdersAdmin);
 
 // Update a specific order's status
 cartRouter.put('/admin/order/status/:id', updateOrderStatusAdmin);
+
+cartRouter.get(
+    '/admin/payment-history',
+    getOnlinePaymentHistoryAdmin
+);
+
+cartRouter.get(
+    '/admin/payment-history/export',
+    exportOnlinePaymentHistoryAdmin
+);
 
 module.exports = cartRouter;

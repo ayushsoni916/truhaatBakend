@@ -3,9 +3,13 @@ const addressModel = require('../../models/store/address.model');
 const couponModel = require('../../models/store/coupon.model');
 const Order = require('../../models/store/order.model');
 const productModel = require('../../models/store/product.model');
+const {
+    generateInvoicePDF
+} = require('../../services/pdf.service');
 
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
+const User = require('../../models/user.model');
 
 const razorpay = new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID,
@@ -626,7 +630,7 @@ exports.createOnlineOrder = async (req, res, next) => {
 
         const safeCheckoutId = checkoutId.trim();
 
-        // Idempotency: retry returns the same checkout.
+        // Return the existing order when the same checkout is retried.
         const existingOrder = await Order.findOne({
             user: userId,
             checkoutId: safeCheckoutId
@@ -661,7 +665,9 @@ exports.createOnlineOrder = async (req, res, next) => {
             });
         }
 
-        const stateCode = String(address.stateCode || '').trim();
+        const stateCode = String(
+            address.stateCode || ''
+        ).trim();
 
         if (!/^\d{2}$/.test(stateCode)) {
             return res.status(400).json({
@@ -670,194 +676,302 @@ exports.createOnlineOrder = async (req, res, next) => {
             });
         }
 
-        const isRajasthan = stateCode === '08';
+        const COMPANY_STATE_CODE = '08';
+        const isRajasthan =
+            stateCode === COMPANY_STATE_CODE;
 
-        // Validate product availability and stock again.
+        // Validate products and stock before creating the order.
         for (const cartItem of cart.items) {
             const product = cartItem.product;
             const quantity = Number(cartItem.quantity);
 
-            if (!product || !product.isActive || !product.inStock) {
+            if (
+                !product ||
+                !product.isActive ||
+                !product.inStock
+            ) {
                 return res.status(400).json({
                     success: false,
-                    message: 'One or more products are unavailable'
+                    message:
+                        'One or more products are unavailable'
                 });
             }
 
-            if (!Number.isInteger(quantity) || quantity < 1) {
+            if (
+                !Number.isInteger(quantity) ||
+                quantity < 1
+            ) {
                 return res.status(400).json({
                     success: false,
-                    message: `Invalid quantity for ${product.name}`
+                    message:
+                        `Invalid quantity for ${product.name}`
                 });
             }
 
             if (product.hasVariants) {
                 const variant = product.variants.find(
                     variantItem =>
-                        String(variantItem.size) === String(cartItem.size)
+                        String(variantItem.size) ===
+                        String(cartItem.size)
                 );
 
-                if (!variant || Number(variant.stock) < quantity) {
+                if (
+                    !variant ||
+                    Number(variant.stock) < quantity
+                ) {
                     return res.status(400).json({
                         success: false,
-                        message: `Insufficient stock for ${product.name}`
+                        message:
+                            `Insufficient stock for ${product.name}`
                     });
                 }
-            } else if (Number(product.totalStock || 0) < quantity) {
+            } else if (
+                Number(product.totalStock || 0) <
+                quantity
+            ) {
                 return res.status(400).json({
                     success: false,
-                    message: `Insufficient stock for ${product.name}`
+                    message:
+                        `Insufficient stock for ${product.name}`
                 });
             }
         }
 
-        // Use the same calculation as the cart screen.
+        // Use the same calculation used by the cart screen.
         const calculation = await calculateCartTotals(
             cart.items,
             cart.couponCode
         );
 
-        if (cart.couponCode && !calculation.couponDetails) {
+        if (
+            cart.couponCode &&
+            !calculation.couponDetails
+        ) {
             return res.status(400).json({
                 success: false,
-                message: 'Coupon is no longer valid. Refresh the cart.'
+                message:
+                    'Coupon is no longer valid. Refresh the cart.'
             });
         }
 
-        const subtotal = round2(calculation.subtotal);
-        const discount = round2(calculation.discount);
-        const shippingFee = round2(calculation.shipping);
+        const subtotal = round2(
+            calculation.subtotal
+        );
+
+        const discount = round2(
+            calculation.discount
+        );
+
+        const shippingFee = round2(
+            calculation.shipping
+        );
+
         const handlingFee = 0;
-        const finalAmount = round2(calculation.finalAmount);
+
+        const finalAmount = round2(
+            calculation.finalAmount
+        );
 
         /*
-         * Allocate the coupon discount proportionately between products.
-         * This gives the correct taxable value and GST after discount.
+         * Allocate the coupon discount proportionately
+         * across all order items.
          */
         let allocatedDiscount = 0;
 
-        const orderItems = cart.items.map((cartItem, index) => {
-            const product = cartItem.product;
-            const quantity = Number(cartItem.quantity);
+        const orderItems = cart.items.map(
+            (cartItem, index) => {
+                const product = cartItem.product;
+                const quantity = Number(
+                    cartItem.quantity
+                );
 
-            const basePrice = Number(product.basePrice);
-            const salePrice = Number(product.salePrice);
+                const basePrice = Number(
+                    product.basePrice
+                );
 
-            const hasSalePrice =
-                Number.isFinite(salePrice) &&
-                salePrice > 0 &&
-                salePrice < basePrice;
+                const salePrice = Number(
+                    product.salePrice
+                );
 
-            // GST-exclusive selling price per unit.
-            const priceBeforeGst = hasSalePrice
-                ? salePrice
-                : basePrice;
+                const hasSalePrice =
+                    Number.isFinite(salePrice) &&
+                    salePrice > 0 &&
+                    salePrice < basePrice;
 
-            const gstPercentage = Number(
-                product.gstPercentage || 0
-            );
+                // GST-exclusive selling price per unit.
+                const priceBeforeGst = hasSalePrice
+                    ? salePrice
+                    : basePrice;
 
-            const finalUnitPrice = round2(
-                priceBeforeGst * (1 + gstPercentage / 100)
-            );
+                const gstPercentage = Number(
+                    product.gstPercentage || 0
+                );
 
-            const grossLineTotal = round2(
-                finalUnitPrice * quantity
-            );
+                // Selling price including GST.
+                const finalUnitPrice = round2(
+                    priceBeforeGst *
+                    (1 + gstPercentage / 100)
+                );
 
-            const isLastItem =
-                index === cart.items.length - 1;
+                // Original base price including GST.
+                const originalFinalPrice = round2(
+                    basePrice *
+                    (1 + gstPercentage / 100)
+                );
 
-            const lineDiscount = discount === 0
-                ? 0
-                : isLastItem
-                    ? round2(discount - allocatedDiscount)
-                    : round2(
-                        discount *
-                        (grossLineTotal / subtotal)
+                const discountPercentage =
+                    hasSalePrice && basePrice > 0
+                        ? Math.round(
+                            (
+                                (basePrice - salePrice) /
+                                basePrice
+                            ) * 100
+                        )
+                        : 0;
+
+                const grossLineTotal = round2(
+                    finalUnitPrice * quantity
+                );
+
+                const isLastItem =
+                    index === cart.items.length - 1;
+
+                let lineDiscount = 0;
+
+                if (discount > 0) {
+                    lineDiscount = isLastItem
+                        ? round2(
+                            discount -
+                            allocatedDiscount
+                        )
+                        : round2(
+                            discount *
+                            (
+                                grossLineTotal /
+                                subtotal
+                            )
+                        );
+                }
+
+                allocatedDiscount = round2(
+                    allocatedDiscount +
+                    lineDiscount
+                );
+
+                // Line total after coupon discount.
+                const totalAmount = round2(
+                    grossLineTotal -
+                    lineDiscount
+                );
+
+                // Reverse-calculate taxable value from GST-inclusive total.
+                const taxableValue = round2(
+                    totalAmount /
+                    (1 + gstPercentage / 100)
+                );
+
+                const gstAmount = round2(
+                    totalAmount -
+                    taxableValue
+                );
+
+                let cgstRate = 0;
+                let sgstRate = 0;
+                let igstRate = 0;
+
+                let cgstAmount = 0;
+                let sgstAmount = 0;
+                let igstAmount = 0;
+
+                if (isRajasthan) {
+                    cgstRate =
+                        gstPercentage / 2;
+
+                    sgstRate =
+                        gstPercentage / 2;
+
+                    cgstAmount = round2(
+                        gstAmount / 2
                     );
 
-            allocatedDiscount = round2(
-                allocatedDiscount + lineDiscount
-            );
+                    sgstAmount = round2(
+                        gstAmount -
+                        cgstAmount
+                    );
+                } else {
+                    igstRate = gstPercentage;
+                    igstAmount = gstAmount;
+                }
 
-            const totalAmount = round2(
-                grossLineTotal - lineDiscount
-            );
+                return {
+                    product: product._id,
+                    name: product.name,
 
-            const taxableValue = round2(
-                totalAmount /
-                (1 + gstPercentage / 100)
-            );
+                    image:
+                        product.mainImage?.url ||
+                        product.mainImage ||
+                        '',
 
-            const gstAmount = round2(
-                totalAmount - taxableValue
-            );
+                    quantity,
+                    size: cartItem.size || null,
 
-            let cgstRate = 0;
-            let sgstRate = 0;
-            let igstRate = 0;
+                    hsnCode:
+                        product.hsnCode || '0000',
 
-            let cgstAmount = 0;
-            let sgstAmount = 0;
-            let igstAmount = 0;
+                    gstPercentage,
 
-            if (isRajasthan) {
-                cgstRate = gstPercentage / 2;
-                sgstRate = gstPercentage / 2;
+                    // GST-exclusive selling price.
+                    price: priceBeforeGst,
 
-                cgstAmount = round2(gstAmount / 2);
-                sgstAmount = round2(
-                    gstAmount - cgstAmount
-                );
-            } else {
-                igstRate = gstPercentage;
-                igstAmount = gstAmount;
+                    // GST-inclusive unit selling price.
+                    finalPrice: finalUnitPrice,
+
+                    // GST-inclusive crossed price.
+                    originalFinalPrice,
+
+                    // Product sale discount.
+                    discountPercentage,
+
+                    taxableValue,
+                    gstAmount,
+
+                    cgst: {
+                        rate: cgstRate,
+                        amount: cgstAmount
+                    },
+
+                    sgst: {
+                        rate: sgstRate,
+                        amount: sgstAmount
+                    },
+
+                    igst: {
+                        rate: igstRate,
+                        amount: igstAmount
+                    },
+
+                    // Quantity total after coupon discount.
+                    totalAmount
+                };
             }
-
-            return {
-                product: product._id,
-                name: product.name,
-                image:
-                    product.mainImage?.url ||
-                    product.mainImage ||
-                    '',
-                quantity,
-                size: cartItem.size || null,
-
-                hsnCode: product.hsnCode,
-                gstPercentage,
-
-                price: priceBeforeGst,
-                taxableValue,
-                gstAmount,
-
-                cgst: {
-                    rate: cgstRate,
-                    amount: cgstAmount
-                },
-
-                sgst: {
-                    rate: sgstRate,
-                    amount: sgstAmount
-                },
-
-                igst: {
-                    rate: igstRate,
-                    amount: igstAmount
-                },
-
-                totalAmount
-            };
-        });
+        );
 
         const taxTotals = orderItems.reduce(
             (totals, item) => {
-                totals.taxableValue += item.taxableValue;
-                totals.cgst += item.cgst.amount;
-                totals.sgst += item.sgst.amount;
-                totals.igst += item.igst.amount;
-                totals.gstTotal += item.gstAmount;
+                totals.taxableValue +=
+                    item.taxableValue;
+
+                totals.cgst +=
+                    item.cgst.amount;
+
+                totals.sgst +=
+                    item.sgst.amount;
+
+                totals.igst +=
+                    item.igst.amount;
+
+                totals.gstTotal +=
+                    item.gstAmount;
 
                 return totals;
             },
@@ -871,7 +985,9 @@ exports.createOnlineOrder = async (req, res, next) => {
         );
 
         Object.keys(taxTotals).forEach(key => {
-            taxTotals[key] = round2(taxTotals[key]);
+            taxTotals[key] = round2(
+                taxTotals[key]
+            );
         });
 
         const orderId =
@@ -883,45 +999,52 @@ exports.createOnlineOrder = async (req, res, next) => {
         let pendingOrder;
 
         try {
-            /*
-             * Create the pending local order first.
-             * The unique checkoutId protects concurrent requests.
-             */
             pendingOrder = await Order.create({
                 orderId,
                 checkoutId: safeCheckoutId,
                 user: userId,
                 items: orderItems,
-                shippingAddress: address.toObject(),
+
+                // Freeze the delivery address at checkout.
+                shippingAddress:
+                    address.toObject(),
 
                 paymentMode: 'ONLINE',
                 paymentStatus: 'PENDING',
                 orderStatus: 'PAYMENT_PENDING',
 
                 subtotal,
-                taxableValue: taxTotals.taxableValue,
+                taxableValue:
+                    taxTotals.taxableValue,
+
                 discount,
+
                 cgst: taxTotals.cgst,
                 sgst: taxTotals.sgst,
                 igst: taxTotals.igst,
                 gstTotal: taxTotals.gstTotal,
+
                 shippingFee,
                 handlingFee,
                 finalAmount,
 
                 couponApplied:
-                    calculation.couponDetails?.code || null
+                    calculation
+                        .couponDetails
+                        ?.code || null
             });
         } catch (error) {
             /*
-             * Two identical requests may pass the first lookup together.
-             * The unique database index allows only one insertion.
+             * Concurrent duplicate checkout requests are
+             * protected by the unique checkoutId index.
              */
             if (error.code === 11000) {
-                const duplicateOrder = await Order.findOne({
-                    user: userId,
-                    checkoutId: safeCheckoutId
-                });
+                const duplicateOrder =
+                    await Order.findOne({
+                        user: userId,
+                        checkoutId:
+                            safeCheckoutId
+                    });
 
                 if (duplicateOrder) {
                     return returnExistingCheckout(
@@ -937,14 +1060,23 @@ exports.createOnlineOrder = async (req, res, next) => {
         try {
             const razorpayOrder =
                 await razorpay.orders.create({
+                    // Testing: charge ₹1.
+                    amount: 100,
+
+                    // Production:
                     // amount: Math.round(finalAmount * 100),
-                    amount: Math.round(1 * 100),
+
                     currency: 'INR',
                     receipt: orderId,
+
                     notes: {
-                        purpose: 'ONLINE_ECOMMERCE',
+                        purpose:
+                            'ONLINE_ECOMMERCE',
+
                         localOrderId:
-                            pendingOrder._id.toString()
+                            pendingOrder
+                                ._id
+                                .toString()
                     }
                 });
 
@@ -955,14 +1087,28 @@ exports.createOnlineOrder = async (req, res, next) => {
 
             return res.status(201).json({
                 success: true,
-                message: 'Payment order created',
+                message:
+                    'Payment order created',
+
                 data: {
-                    localOrderId: pendingOrder._id,
-                    orderId: pendingOrder.orderId,
-                    razorpayOrderId: razorpayOrder.id,
-                    amount: razorpayOrder.amount,
-                    currency: razorpayOrder.currency,
-                    key: process.env.RAZORPAY_KEY_ID
+                    localOrderId:
+                        pendingOrder._id,
+
+                    orderId:
+                        pendingOrder.orderId,
+
+                    razorpayOrderId:
+                        razorpayOrder.id,
+
+                    amount:
+                        razorpayOrder.amount,
+
+                    currency:
+                        razorpayOrder.currency,
+
+                    key:
+                        process.env
+                            .RAZORPAY_KEY_ID
                 }
             });
         } catch (error) {
@@ -986,7 +1132,8 @@ exports.createOnlineOrder = async (req, res, next) => {
 
             return res.status(500).json({
                 success: false,
-                message: 'Unable to initialize payment'
+                message:
+                    'Unable to initialize payment'
             });
         }
     } catch (error) {
@@ -1056,6 +1203,220 @@ exports.getOrderDetails = async (req, res, next) => {
             }
         });
     } catch (error) {
+        next(error);
+    }
+};
+
+exports.downloadOnlineOrderInvoice = async (
+    req,
+    res,
+    next
+) => {
+    try {
+        const { orderId } = req.params;
+
+        const order = await Order.findOne({
+            orderId,
+            paymentStatus: 'PAID'
+        }).lean();
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: 'Order not found'
+            });
+        }
+
+        if (order.paymentStatus !== 'PAID') {
+            return res.status(400).json({
+                success: false,
+                message:
+                    'Invoice is available only after payment confirmation'
+            });
+        }
+
+        if (!order.invoiceNumber) {
+            return res.status(409).json({
+                success: false,
+                message:
+                    'Invoice is being generated. Please try again.'
+            });
+        }
+
+        const invoiceItems = order.items.map(item => {
+            const quantity = Number(item.quantity || 1);
+            const gstPercentage = Number(
+                item.gstPercentage || 0
+            );
+
+            const grossLineTotal = round2(
+                Number(item.price || 0) *
+                quantity *
+                (1 + gstPercentage / 100)
+            );
+
+            const discountAmount = Math.max(
+                0,
+                round2(
+                    grossLineTotal -
+                    Number(item.totalAmount || 0)
+                )
+            );
+
+            const discountPercentage =
+                grossLineTotal > 0
+                    ? round2(
+                        (discountAmount /
+                            grossLineTotal) *
+                        100
+                    )
+                    : 0;
+
+            return {
+                description: item.name,
+                hsn: item.hsnCode || 'N/A',
+                qty: quantity,
+                unit: 'PCS',
+
+                // GST-exclusive selling price
+                rate: Number(item.price || 0),
+
+                discPercent: discountPercentage,
+                discAmount: discountAmount,
+
+                taxableValue: Number(
+                    item.taxableValue || 0
+                ),
+
+                cgst: {
+                    rate: Number(
+                        item.cgst?.rate || 0
+                    ),
+                    amount: Number(
+                        item.cgst?.amount || 0
+                    )
+                },
+
+                sgst: {
+                    rate: Number(
+                        item.sgst?.rate || 0
+                    ),
+                    amount: Number(
+                        item.sgst?.amount || 0
+                    )
+                },
+
+                igst: {
+                    rate: Number(
+                        item.igst?.rate || 0
+                    ),
+                    amount: Number(
+                        item.igst?.amount || 0
+                    )
+                },
+
+                totalAmount: Number(
+                    item.totalAmount || 0
+                )
+            };
+        });
+
+        const shippingAddress =
+            order.shippingAddress || {};
+
+        const addressStr = [
+            shippingAddress.addressLine1,
+            shippingAddress.addressLine2,
+            shippingAddress.area,
+            shippingAddress.city,
+            shippingAddress.pincode
+        ]
+            .filter(Boolean)
+            .join(', ');
+
+        const customerName = [
+            shippingAddress.firstName,
+            shippingAddress.lastName
+        ]
+            .filter(Boolean)
+            .join(' ') || 'Customer';
+
+        const invoiceData = {
+            company: {
+                name:
+                    'TRUHAAT SALES AND NETWORKING PRIVATE LIMITED',
+                address:
+                    '29/E/290, GROUND FLOOR, GHARONDA, PRATAP NAGAR, SECTOR-11, SANGANER, JAIPUR RAJASTHAN-302033',
+                gstin: '08AAMCT0160D1ZK',
+                phone:
+                    '01414606217, +91-9314010888',
+                email: 'INFO.TRUHAAT@GMAIL.COM'
+            },
+
+            customer: {
+                name: customerName,
+                addressStr,
+                placeOfSupply:
+                    shippingAddress.state || 'N/A',
+                stateCode:
+                    shippingAddress.stateCode || 'N/A',
+                phone:
+                    shippingAddress.phone || 'N/A',
+                email:
+                    shippingAddress.email || 'N/A'
+            },
+
+            invoiceDetails: {
+                invoiceNo: order.invoiceNumber,
+                orderNo: order.orderId,
+
+                date: new Date(
+                    order.paidAt || order.createdAt
+                )
+                    .toLocaleDateString('en-GB')
+                    .replace(/\//g, '-'),
+
+                paymentTerms: 'ONLINE',
+                paymentRef:
+                    order.razorpayPaymentId || 'N/A',
+
+                courierName: 'N/A',
+                trackingDetails: 'Pending'
+            },
+
+            items: invoiceItems,
+
+            totals: {
+                taxableValue: Number(
+                    order.taxableValue || 0
+                ),
+                cgst: Number(order.cgst || 0),
+                sgst: Number(order.sgst || 0),
+                igst: Number(order.igst || 0),
+
+                discount: Number(
+                    order.discount || 0
+                ),
+                shippingFee: Number(
+                    order.shippingFee || 0
+                ),
+                handlingFee: Number(
+                    order.handlingFee || 0
+                ),
+
+                grandTotal: Number(
+                    order.finalAmount || 0
+                )
+            }
+        };
+
+        return generateInvoicePDF(invoiceData, res);
+    } catch (error) {
+        console.error(
+            'Online invoice generation error:',
+            error
+        );
+
         next(error);
     }
 };
@@ -1203,3 +1564,300 @@ exports.updateOrderStatusAdmin = async (req, res, next) => {
         next(error);
     }
 };
+
+const buildPaymentHistoryQuery = async ({
+    fromDate,
+    toDate,
+    status,
+    search
+}) => {
+    const query = {
+        paymentMode: 'ONLINE'
+    };
+
+    if (
+        status &&
+        status !== 'ALL' &&
+        ['PAID', 'PENDING', 'FAILED'].includes(status)
+    ) {
+        query.paymentStatus = status;
+    }
+
+    /*
+     * Paid history uses paidAt.
+     * Pending/failed/all history uses createdAt.
+     */
+    const dateField =
+        status === 'PAID'
+            ? 'paidAt'
+            : 'createdAt';
+
+    const dateRange = {};
+
+    if (fromDate) {
+        dateRange.$gte = new Date(
+            `${fromDate}T00:00:00.000+05:30`
+        );
+    }
+
+    if (toDate) {
+        dateRange.$lte = new Date(
+            `${toDate}T23:59:59.999+05:30`
+        );
+    }
+
+    if (Object.keys(dateRange).length > 0) {
+        query[dateField] = dateRange;
+    }
+
+    const safeSearch = String(search || '').trim();
+
+    if (safeSearch) {
+        const escapedSearch = safeSearch.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            '\\$&'
+        );
+
+        const searchRegex = new RegExp(
+            escapedSearch,
+            'i'
+        );
+
+        const matchingUsers = await User.find({
+            $or: [
+                {
+                    firstName: searchRegex
+                },
+                {
+                    lastName: searchRegex
+                },
+                {
+                    phone: searchRegex
+                },
+                {
+                    email: searchRegex
+                }
+            ]
+        }).select('_id');
+
+        query.$or = [
+            {
+                orderId: searchRegex
+            },
+            {
+                razorpayOrderId: searchRegex
+            },
+            {
+                razorpayPaymentId: searchRegex
+            },
+            {
+                User: {
+                    $in: matchingUsers.map(
+                        user => user._id
+                    )
+                }
+            }
+        ];
+    }
+
+    return query;
+};
+
+exports.getOnlinePaymentHistoryAdmin =
+    async (req, res, next) => {
+        try {
+            const {
+                fromDate,
+                toDate,
+                status = 'ALL',
+                search = '',
+                page = 1,
+                limit = 20
+            } = req.query;
+
+            const currentPage = Math.max(
+                Number.parseInt(page, 10) || 1,
+                1
+            );
+
+            const pageLimit = Math.min(
+                Math.max(
+                    Number.parseInt(limit, 10) || 20,
+                    1
+                ),
+                100
+            );
+
+            const skip =
+                (currentPage - 1) * pageLimit;
+
+            const query =
+                await buildPaymentHistoryQuery({
+                    fromDate,
+                    toDate,
+                    status,
+                    search
+                });
+
+            const [payments, total] =
+                await Promise.all([
+                    Order.find(query)
+                        .populate(
+                            'user',
+                            'firstName lastName phone email'
+                        )
+                        .sort({
+                            paidAt: -1,
+                            createdAt: -1
+                        })
+                        .skip(skip)
+                        .limit(pageLimit)
+                        .lean(),
+
+                    Order.countDocuments(query)
+                ]);
+
+            return res.status(200).json({
+                success: true,
+                data: payments,
+                pagination: {
+                    page: currentPage,
+                    limit: pageLimit,
+                    total,
+                    totalPages:
+                        Math.ceil(
+                            total / pageLimit
+                        ) || 1
+                }
+            });
+        } catch (error) {
+            next(error);
+        }
+    };
+
+const escapeCsvValue = value => {
+    let safeValue = String(value ?? '');
+
+    // Prevent spreadsheet formula injection.
+    if (/^[=+\-@]/.test(safeValue)) {
+        safeValue = `'${safeValue}`;
+    }
+
+    return `"${safeValue.replace(/"/g, '""')}"`;
+};
+
+exports.exportOnlinePaymentHistoryAdmin =
+    async (req, res, next) => {
+        try {
+            const {
+                fromDate,
+                toDate,
+                status = 'ALL',
+                search = ''
+            } = req.query;
+
+            const query =
+                await buildPaymentHistoryQuery({
+                    fromDate,
+                    toDate,
+                    status,
+                    search
+                });
+
+            const payments = await Order.find(query)
+                .populate(
+                    'user',
+                    'firstName lastName phone email'
+                )
+                .sort({
+                    paidAt: -1,
+                    createdAt: -1
+                })
+                .lean();
+
+            const headers = [
+                'Payment Date',
+                'Order ID',
+                'Razorpay Order ID',
+                'Razorpay Payment ID',
+                'Customer Name',
+                'Phone',
+                'Email',
+                'Amount',
+                'Payment Mode',
+                'Payment Status',
+                'Order Status'
+            ];
+
+            const rows = payments.map(order => {
+                const paymentDate =
+                    order.paidAt ||
+                    order.createdAt;
+
+                const customerName = [
+                    order.user?.firstName,
+                    order.user?.lastName
+                ]
+                    .filter(Boolean)
+                    .join(' ');
+
+                return [
+                    paymentDate
+                        ? new Date(
+                            paymentDate
+                        ).toLocaleString('en-IN', {
+                            timeZone:
+                                'Asia/Kolkata'
+                        })
+                        : '',
+
+                    order.orderId,
+                    order.razorpayOrderId,
+                    order.razorpayPaymentId,
+                    customerName,
+                    order.user?.phone,
+                    order.user?.email,
+                    Number(
+                        order.finalAmount || 0
+                    ).toFixed(2),
+                    order.paymentMode,
+                    order.paymentStatus,
+                    order.orderStatus
+                ];
+            });
+
+            const csv = [
+                headers,
+                ...rows
+            ]
+                .map(row =>
+                    row
+                        .map(escapeCsvValue)
+                        .join(',')
+                )
+                .join('\n');
+
+            const fileFrom =
+                fromDate || 'all';
+
+            const fileTo =
+                toDate || 'all';
+
+            res.setHeader(
+                'Content-Type',
+                'text/csv; charset=utf-8'
+            );
+
+            res.setHeader(
+                'Content-Disposition',
+                `attachment; filename="online-payments-${fileFrom}-to-${fileTo}.csv"`
+            );
+
+            // BOM allows Excel to read UTF-8 correctly.
+            return res.status(200).send(
+                `\uFEFF${csv}`
+            );
+        } catch (error) {
+            next(error);
+        }
+    };
