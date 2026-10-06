@@ -641,7 +641,7 @@ exports.placeOfflineOrder = async (
 
             const amountInPaise = oneRupeeTesting
                 ? 100
-                : Math.round(finalPayable * 100);
+                : 100;//
 
             const razorpayOrder =
                 await razorpay.orders.create({
@@ -688,10 +688,9 @@ exports.placeOfflineOrder = async (
 
                 razorpayOrder: {
                     id: razorpayOrder.id,
-                    // amount:
-                    //     razorpayOrder.amount,
                     amount:
-                        '100', // Always send 1 rupee for testing, actual amount is calculated in webhook
+                        razorpayOrder.amount,
+                   
                     currency:
                         razorpayOrder.currency,
                     key:

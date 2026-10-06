@@ -403,7 +403,7 @@ const processOfflineEcommercePayment = async paymentEntity => {
     const expectedAmount =
         process.env.RAZORPAY_ONE_RUPEE_TEST === 'true'
             ? 100
-            : Math.round(totalPayableAmount * 100);
+            : 100;
 
     if (Number(paymentEntity.amount) !== expectedAmount) {
         throw new Error(
