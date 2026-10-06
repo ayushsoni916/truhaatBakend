@@ -688,8 +688,10 @@ exports.placeOfflineOrder = async (
 
                 razorpayOrder: {
                     id: razorpayOrder.id,
+                    // amount:
+                    //     razorpayOrder.amount,
                     amount:
-                        razorpayOrder.amount,
+                        '100', // Always send 1 rupee for testing, actual amount is calculated in webhook
                     currency:
                         razorpayOrder.currency,
                     key:
