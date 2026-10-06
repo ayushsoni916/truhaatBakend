@@ -21,14 +21,61 @@ const generateInvoicePDF = (data, res) => {
     // --- 2. BILLING & INVOICE META DETAILS ---
     const topY = doc.y;
 
+    if (data.shop) {
+        doc.fontSize(10)
+            .font('Helvetica-Bold')
+            .text(
+                'Store Details:',
+                30,
+                topY
+            );
+
+        doc.fontSize(9)
+            .text(data.shop.name || 'N/A');
+
+        doc.font('Helvetica')
+            .text(
+                `Address: ${data.shop.addressStr || 'N/A'
+                }`,
+                { width: 250 }
+            )
+            .text(
+                `State: ${data.shop.state || 'N/A'
+                } (Code: ${data.shop.stateCode || 'N/A'
+                })`
+            )
+            .text(
+                `GSTIN/UIN: ${data.shop.gstin || 'N/A'
+                }`
+            )
+            .text(
+                `Contact Person: ${data.shop.contactPerson || 'N/A'
+                }`
+            )
+            .text(
+                `Contact: ${data.shop.phone || 'N/A'
+                }`
+            );
+
+        doc.moveDown();
+    }
+
+    const customerTopY = data.shop ? doc.y : topY;
+
     // Left side: Customer (Properly Formatted)
-    doc.fontSize(10).font('Helvetica-Bold').text('Billed To:', 30, topY);
+    doc.fontSize(10).font('Helvetica-Bold').text(
+        'Billed To:',
+        30,
+        customerTopY
+    );
     doc.fontSize(9).text(data.customer.name);
     doc.font('Helvetica')
         .text(`Address: ${data.customer.addressStr}`, { width: 250 })
         .text(`State: ${data.customer.placeOfSupply} (Code: ${data.customer.stateCode})`)
         .text(`Contact: ${data.customer.phone}`)
         .text(`Email: ${data.customer.email}`);
+
+    const leftBottomY = doc.y;
 
     // Right side: Invoice Meta 
     const paymentStr = data.invoiceDetails.paymentRef
@@ -54,9 +101,20 @@ const generateInvoicePDF = (data, res) => {
             }`
         );
 
+    const rightBottomY = doc.y;
+
     // --- 3. MAIN TABLE HEADER ---
-    doc.moveDown(2);
-    const tableTop = doc.y;
+    let tableTop;
+
+    if (data.shop) {
+        // Offline invoice: begin below both store/customer and invoice details
+        doc.y = Math.max(leftBottomY, rightBottomY) + 15;
+        tableTop = doc.y;
+    } else {
+        // Preserve the existing MLM and online invoice layout
+        doc.moveDown(2);
+        tableTop = doc.y;
+    }
 
     doc.rect(30, tableTop, 535, 20).fill('#f4f4f4');
     doc.fillColor('#000000').font('Helvetica-Bold').fontSize(7);

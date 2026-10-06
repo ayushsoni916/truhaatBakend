@@ -1,7 +1,7 @@
 const express = require('express');
 const orderRouter = express.Router();
 const { requireAuth } = require('../../middleware/auth.middleware');
-const { placeOfflineOrder, getOfflineOrderHistory, getAllPlatformOrders, markPayoutSettled, getOrdersByShopId, updateOrderStatus } = require('../../controllers/shop/order.controller');
+const { placeOfflineOrder, getOfflineOrderHistory, getAllPlatformOrders, markPayoutSettled, getOrdersByShopId, updateOrderStatus, downloadOfflineOrderInvoice } = require('../../controllers/shop/order.controller');
 
 // orderRouter.use(requireAuth);
 
@@ -15,6 +15,10 @@ orderRouter.get('/admin/all', getAllPlatformOrders);
 
 // Endpoint to mark a specific vendor payout as 'Settled'
 orderRouter.put('/admin/settle/:orderId', markPayoutSettled);
+orderRouter.get(
+    '/invoice/:orderId',
+    downloadOfflineOrderInvoice
+);
 
 // ==========================================
 // SHOP OWNER ROUTES

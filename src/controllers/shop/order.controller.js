@@ -3,6 +3,7 @@ const User = require("../../models/user.model");
 const cashbackWalletModel = require("../../models/cashbackWallet.model");
 const offlineCartModel = require("../../models/Shop/offlineCart.model");
 const orderModel = require("../../models/Shop/order.model");
+const { generateInvoicePDF } = require('../../services/pdf.service');
 const crypto = require('crypto');
 
 // Initialize Razorpay 
@@ -690,7 +691,7 @@ exports.placeOfflineOrder = async (
                     id: razorpayOrder.id,
                     amount:
                         razorpayOrder.amount,
-                   
+
                     currency:
                         razorpayOrder.currency,
                     key:
@@ -868,6 +869,296 @@ exports.updateOrderStatus = async (req, res, next) => {
         });
     } catch (error) {
         console.error("Update Order Status Error:", error);
+        next(error);
+    }
+};
+
+exports.downloadOfflineOrderInvoice = async (
+    req,
+    res,
+    next
+) => {
+    try {
+        const { orderId } = req.params;
+
+        const order = await orderModel.findOne({
+            orderId,
+            paymentStatus: 'PAID'
+        }).lean();
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    'Paid offline order not found'
+            });
+        }
+
+        if (!order.invoiceNumber) {
+            return res.status(409).json({
+                success: false,
+                message:
+                    'Invoice is being generated. Please try again.'
+            });
+        }
+
+        const shop = order.shopSnapshot || {};
+        const shopAddress = shop.address || {};
+        const shopTax = shop.taxDetails || {};
+        const customer =
+            order.customerSnapshot || {};
+
+        const shopStateCode =
+            shop.stateCode ||
+            String(shopTax.gstNumber || '')
+                .slice(0, 2) ||
+            'N/A';
+
+        const invoiceItems = order.items.map(
+            item => {
+                const quantity = Number(
+                    item.quantity || 1
+                );
+
+                const gstPercentage = Number(
+                    item.gstPercentage || 0
+                );
+
+                const originalFinalPrice = Number(
+                    item.originalFinalPrice ||
+                    item.finalPrice ||
+                    0
+                );
+
+                const finalPrice = Number(
+                    item.finalPrice || 0
+                );
+
+                const originalRateBeforeGst =
+                    gstPercentage > 0
+                        ? round2(
+                            originalFinalPrice /
+                            (
+                                1 +
+                                gstPercentage / 100
+                            )
+                        )
+                        : round2(originalFinalPrice);
+
+                const discountAmount = Math.max(
+                    0,
+                    round2(
+                        (
+                            originalFinalPrice -
+                            finalPrice
+                        ) * quantity
+                    )
+                );
+
+                return {
+                    description:
+                        item.size
+                            ? `${item.name} (${item.size})`
+                            : item.name,
+
+                    hsn:
+                        item.hsnCode || 'N/A',
+
+                    qty: quantity,
+                    unit: 'PCS',
+
+                    rate: originalRateBeforeGst,
+
+                    discPercent: Number(
+                        item.discountPercentage || 0
+                    ),
+
+                    discAmount: discountAmount,
+
+                    taxableValue: Number(
+                        item.taxableValue || 0
+                    ),
+
+                    cgst: {
+                        rate: Number(
+                            item.cgst?.rate || 0
+                        ),
+                        amount: Number(
+                            item.cgst?.amount || 0
+                        )
+                    },
+
+                    sgst: {
+                        rate: Number(
+                            item.sgst?.rate || 0
+                        ),
+                        amount: Number(
+                            item.sgst?.amount || 0
+                        )
+                    },
+
+                    igst: {
+                        rate: Number(
+                            item.igst?.rate || 0
+                        ),
+                        amount: Number(
+                            item.igst?.amount || 0
+                        )
+                    },
+
+                    totalAmount: Number(
+                        item.totalAmount || 0
+                    )
+                };
+            }
+        );
+
+        const invoiceData = {
+            company: {
+                name:
+                    'TRUHAAT SALES AND NETWORKING PRIVATE LIMITED',
+
+                address:
+                    '29/E/290, GROUND FLOOR, GHARONDA, PRATAP NAGAR, SECTOR-11, SANGANER, JAIPUR RAJASTHAN-302033',
+
+                gstin: '08AAMCT0160D1ZK',
+
+                phone:
+                    '01414606217, +91-9314010888',
+
+                email:
+                    'INFO.TRUHAAT@GMAIL.COM'
+            },
+
+            shop: {
+                name: shop.name || 'N/A',
+
+                addressStr: [
+                    shopAddress.street,
+                    shopAddress.area,
+                    shopAddress.city,
+                    shopAddress.state,
+                    shopAddress.pincode
+                ]
+                    .filter(Boolean)
+                    .join(', '),
+
+                state:
+                    shopAddress.state || 'N/A',
+
+                stateCode: shopStateCode,
+
+                gstin:
+                    shopTax.gstNumber || 'N/A',
+
+                pan:
+                    shopTax.panNumber || 'N/A',
+
+                contactPerson:
+                    shop.owner?.name || 'N/A',
+
+                phone:
+                    shop.phone ||
+                    shop.owner?.mobile ||
+                    'N/A',
+
+                email:
+                    shop.owner?.email || 'N/A'
+            },
+
+            customer: {
+                name:
+                    [
+                        customer.firstName,
+                        customer.lastName
+                    ]
+                        .filter(Boolean)
+                        .join(' ') ||
+                    'Customer',
+
+                // No shipping address is required
+                // because this is store pickup.
+                addressStr: 'Store Pickup',
+
+                placeOfSupply:
+                    shopAddress.state || 'N/A',
+
+                stateCode: shopStateCode,
+
+                phone:
+                    customer.phone || 'N/A',
+
+                email:
+                    customer.email || 'N/A'
+            },
+
+            invoiceDetails: {
+                invoiceNo:
+                    order.invoiceNumber,
+
+                orderNo:
+                    order.orderId,
+
+                date: new Date(
+                    order.paidAt ||
+                    order.createdAt
+                )
+                    .toLocaleDateString('en-GB')
+                    .replace(/\//g, '-'),
+
+                paymentTerms: 'ONLINE',
+
+                paymentRef:
+                    order.razorpayPaymentId ||
+                    'N/A',
+
+                deliveryMethod: 'BY HAND',
+
+                courierName: 'N/A',
+
+                trackingDetails:
+                    'Store Pickup'
+            },
+
+            taxType:
+                order.taxType || 'CGST_SGST',
+
+            items: invoiceItems,
+
+            totals: {
+                taxableValue: Number(
+                    order.taxableValue || 0
+                ),
+
+                cgst: Number(order.cgst || 0),
+                sgst: Number(order.sgst || 0),
+                igst: Number(order.igst || 0),
+
+                discount: Number(
+                    order.productDiscount || 0
+                ),
+
+                shippingFee: 0,
+                handlingFee: 0,
+
+                // Cashback points are a payment adjustment.
+                // The tax invoice remains for full product value.
+                grandTotal: Number(
+                    order.totalAmount || 0
+                )
+            }
+        };
+
+        return generateInvoicePDF(
+            invoiceData,
+            res
+        );
+    } catch (error) {
+        console.error(
+            'Offline invoice generation error:',
+            error
+        );
+
         next(error);
     }
 };
