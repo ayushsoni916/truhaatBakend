@@ -11,6 +11,7 @@ const offlineCartModel = require('../models/Shop/offlineCart.model');
 const cashbackWalletModel = require('../models/cashbackWallet.model');
 const cashbackTransactionModel = require('../models/cashbackTransaction.model'); // Adjust path if needed
 const addressModel = require('../models/store/address.model');
+const offlineProductModel = require('../models/Shop/product.model');
 
 const mongoose = require('mongoose');
 
@@ -365,6 +366,321 @@ const processOnlineEcommercePayment = async paymentEntity => {
     }
 };
 
+const processOfflineEcommercePayment = async paymentEntity => {
+    const razorpayOrderId = paymentEntity.order_id;
+    const razorpayPaymentId = paymentEntity.id;
+
+    const existingOrders = await orderModel.find({
+        razorpayOrderId
+    });
+
+    if (!existingOrders.length) {
+        return {
+            matched: false,
+            processed: false
+        };
+    }
+
+    // Both order.paid and payment.captured may arrive.
+    // Do not process the same orders twice.
+    if (
+        existingOrders.every(
+            order => order.paymentStatus === 'PAID'
+        )
+    ) {
+        return {
+            matched: true,
+            processed: false
+        };
+    }
+
+    const totalPayableAmount = existingOrders.reduce(
+        (total, order) =>
+            total + Number(order.payableAmount || 0),
+        0
+    );
+
+    const expectedAmount =
+        process.env.RAZORPAY_ONE_RUPEE_TEST === 'true'
+            ? 100
+            : Math.round(totalPayableAmount * 100);
+
+    if (Number(paymentEntity.amount) !== expectedAmount) {
+        throw new Error(
+            `Offline order amount mismatch. Expected ${expectedAmount}, received ${paymentEntity.amount}`
+        );
+    }
+
+    if (paymentEntity.currency !== 'INR') {
+        throw new Error('Invalid payment currency');
+    }
+
+    if (paymentEntity.status !== 'captured') {
+        throw new Error(
+            `Payment is not captured: ${paymentEntity.status}`
+        );
+    }
+
+    const session = await mongoose.startSession();
+    let processed = false;
+
+    try {
+        await session.withTransaction(async () => {
+            const pendingOrders = await orderModel.find({
+                razorpayOrderId,
+                paymentStatus: 'PENDING'
+            }).session(session);
+
+            if (!pendingOrders.length) {
+                return;
+            }
+
+            const userId = pendingOrders[0].user;
+
+            const pointsUsed = pendingOrders.reduce(
+                (total, order) =>
+                    total + Number(order.pointsUsed || 0),
+                0
+            );
+
+            const totalOrderValue = pendingOrders.reduce(
+                (total, order) =>
+                    total + Number(order.totalAmount || 0),
+                0
+            );
+
+            /*
+             * Deduct ShopProduct stock.
+             */
+            for (const order of pendingOrders) {
+                for (const item of order.items) {
+                    const product =
+                        await offlineProductModel
+                            .findById(item.product)
+                            .session(session);
+
+                    if (!product) {
+                        throw new Error(
+                            `Product not found: ${item.product}`
+                        );
+                    }
+
+                    const quantity = Number(
+                        item.quantity || 0
+                    );
+
+                    if (
+                        product.hasVariants &&
+                        item.size
+                    ) {
+                        const variant =
+                            product.variants.find(
+                                entry =>
+                                    String(entry.size) ===
+                                    String(item.size)
+                            );
+
+                        if (
+                            !variant ||
+                            variant.stock < quantity
+                        ) {
+                            throw new Error(
+                                `Insufficient stock for ${product.name}, size ${item.size}`
+                            );
+                        }
+
+                        variant.stock -= quantity;
+
+                        product.totalStock =
+                            product.variants.reduce(
+                                (total, entry) =>
+                                    total +
+                                    Number(entry.stock || 0),
+                                0
+                            );
+                    } else {
+                        if (
+                            Number(product.totalStock || 0) <
+                            quantity
+                        ) {
+                            throw new Error(
+                                `Insufficient stock for ${product.name}`
+                            );
+                        }
+
+                        product.totalStock -= quantity;
+                    }
+
+                    product.inStock =
+                        Number(product.totalStock || 0) > 0;
+
+                    await product.save({ session });
+                }
+            }
+
+            /*
+             * Cashback wallet processing.
+             */
+            let wallet =
+                await cashbackWalletModel
+                    .findOne({ userId })
+                    .session(session);
+
+            if (!wallet) {
+                wallet = new cashbackWalletModel({
+                    userId,
+                    pointsBalance: 0,
+                    lifetimePointsEarned: 0
+                });
+            }
+
+            if (
+                pointsUsed >
+                Number(wallet.pointsBalance || 0)
+            ) {
+                throw new Error(
+                    'Insufficient cashback points'
+                );
+            }
+
+            const cashbackEarned = Math.floor(
+                totalOrderValue * 0.01
+            );
+
+            const transactions = [];
+
+            if (pointsUsed > 0) {
+                wallet.pointsBalance -= pointsUsed;
+
+                transactions.push({
+                    userId,
+                    amount: -pointsUsed,
+                    type: 'DEBIT',
+                    description:
+                        'Redeemed points for Offline Store Purchase',
+                    razorpayOrderId
+                });
+            }
+
+            if (cashbackEarned > 0) {
+                wallet.pointsBalance += cashbackEarned;
+                wallet.lifetimePointsEarned +=
+                    cashbackEarned;
+
+                transactions.push({
+                    userId,
+                    amount: cashbackEarned,
+                    type: 'CREDIT',
+                    description:
+                        '1% Cashback for Offline Store Purchase',
+                    razorpayOrderId
+                });
+            }
+
+            await wallet.save({ session });
+
+            if (transactions.length) {
+                await cashbackTransactionModel.insertMany(
+                    transactions,
+                    { session }
+                );
+            }
+
+            /*
+             * Remove only purchased quantities from cart.
+             * This avoids deleting items added after checkout.
+             */
+            const cart = await offlineCartModel
+                .findOne({ user: userId })
+                .session(session);
+
+            if (cart) {
+                const purchasedItems =
+                    pendingOrders.flatMap(
+                        order => order.items
+                    );
+
+                for (const purchased of purchasedItems) {
+                    const cartItemIndex =
+                        cart.items.findIndex(
+                            cartItem =>
+                                String(cartItem.product) ===
+                                String(
+                                    purchased.product
+                                ) &&
+                                String(
+                                    cartItem.size || ''
+                                ) ===
+                                String(
+                                    purchased.size || ''
+                                )
+                        );
+
+                    if (cartItemIndex === -1) {
+                        continue;
+                    }
+
+                    cart.items[
+                        cartItemIndex
+                    ].quantity -= Number(
+                        purchased.quantity || 0
+                    );
+
+                    if (
+                        cart.items[cartItemIndex]
+                            .quantity <= 0
+                    ) {
+                        cart.items.splice(
+                            cartItemIndex,
+                            1
+                        );
+                    }
+                }
+
+                if (cart.items.length) {
+                    await cart.save({ session });
+                } else {
+                    await offlineCartModel.deleteOne(
+                        { _id: cart._id },
+                        { session }
+                    );
+                }
+            }
+
+            /*
+             * Finalize all shop-wise orders.
+             */
+            const paidAt = new Date();
+
+            for (const order of pendingOrders) {
+                order.paymentStatus = 'PAID';
+                order.razorpayPaymentId =
+                    razorpayPaymentId;
+                order.paidAt = paidAt;
+
+                // Keep Pending. The shopkeeper must accept it.
+                order.status = 'Pending';
+
+                if (!order.invoiceNumber) {
+                    order.invoiceNumber =
+                        `SINV-${order.orderId}`;
+                }
+
+                await order.save({ session });
+            }
+
+            processed = true;
+        });
+
+        return {
+            matched: true,
+            processed
+        };
+    } finally {
+        await session.endSession();
+    }
+};
+
 exports.handleWebhook = async (req, res) => {
     try {
         console.log("📡 Razorpay Webhook Received.");
@@ -466,68 +782,26 @@ exports.handleWebhook = async (req, res) => {
             }
 
 
-            // =========================================================================
-            // SCENARIO C: LOCAL STORE OFFLINE ORDERS (Stored in orderModel)
-            // =========================================================================
-            const offlineOrders = await orderModel.find({ razorpayOrderId: targetOrderId, status: 'Pending' });
+            // =================================================
+            // SCENARIO C: OFFLINE SHOP ORDERS
+            // =================================================
+            const offlineOrderResult =
+                await processOfflineEcommercePayment(
+                    paymentEntity
+                );
 
-            if (offlineOrders && offlineOrders.length > 0) {
-                console.log(`🛍️ Found ${offlineOrders.length} pending Local Store Orders for Razorpay ID: ${targetOrderId}`);
-
-                const orderUserId = offlineOrders[0].user;
-                let totalOrderValue = 0;
-
-                // 1. Mark all split orders as Accepted
-                for (let order of offlineOrders) {
-                    order.status = 'Accepted';
-                    await order.save();
-                    totalOrderValue += order.totalAmount; // Sum up the true worth of the cart
+            if (offlineOrderResult.matched) {
+                if (offlineOrderResult.processed) {
+                    console.log(
+                        `Offline shop orders successfully finalized: ${targetOrderId}`
+                    );
+                } else {
+                    console.log(
+                        `Offline shop orders already processed: ${targetOrderId}`
+                    );
                 }
 
-                // 2. Fetch or Create the User's Cashback Wallet
-                let wallet = await cashbackWalletModel.findOne({ userId: orderUserId });
-                if (!wallet) {
-                    wallet = await cashbackWalletModel.create({ userId: orderUserId, pointsBalance: 0, lifetimePointsEarned: 0 });
-                }
-
-                // 3. Deduct Points (If the user burned points during checkout)
-                const pointsBurned = offlineOrders[0].pointsUsed || 0;
-                if (pointsBurned > 0) {
-                    wallet.pointsBalance -= pointsBurned;
-
-                    await cashbackTransactionModel.create({
-                        userId: orderUserId,
-                        amount: -pointsBurned, // Negative for debit
-                        type: 'DEBIT',
-                        description: 'Redeemed points for Local Store Purchase',
-                        razorpayOrderId: targetOrderId
-                    });
-                    console.log(`🔥 Deducted ${pointsBurned} points from user ${orderUserId}`);
-                }
-
-                // 4. Award 1% Cashback on the total actual value of the items
-                const cashbackEarned = Math.floor(totalOrderValue * 0.01); // 1% Hardcoded
-                if (cashbackEarned > 0) {
-                    wallet.pointsBalance += cashbackEarned;
-                    wallet.lifetimePointsEarned += cashbackEarned;
-
-                    await cashbackTransactionModel.create({
-                        userId: orderUserId,
-                        amount: cashbackEarned, // Positive for credit
-                        type: 'CREDIT',
-                        description: '1% Cashback for Local Store Purchase',
-                        razorpayOrderId: targetOrderId
-                    });
-                    console.log(`💰 Awarded ₹${cashbackEarned} cashback to user ${orderUserId}`);
-                }
-
-                await wallet.save();
-
-                // 5. Clear the User's Offline Cart
-                await offlineCartModel.findOneAndDelete({ user: orderUserId });
-                console.log(`🛒 Cart cleared for user ${orderUserId}. Store Order processing complete!`);
-
-                return res.status(200).send('ok'); // Done processing Scenario B
+                return res.status(200).send('ok');
             }
 
 

@@ -6,7 +6,7 @@ const { placeOfflineOrder, getOfflineOrderHistory, getAllPlatformOrders, markPay
 // orderRouter.use(requireAuth);
 
 // Endpoint to place the order from the cart
-orderRouter.post('/place', placeOfflineOrder);
+orderRouter.post('/place', requireAuth, placeOfflineOrder);
 
 // Endpoint for the user to see their previous offline orders
 orderRouter.get('/my-history', requireAuth, getOfflineOrderHistory);
